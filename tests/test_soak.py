@@ -26,33 +26,49 @@ def _health(**overrides):
     return HealthSnapshot(**data)
 
 
-def test_clean_24h_soak_passes_only_after_required_duration():
-    first = SoakSample(1_000, _health().to_dict())
-    last = SoakSample(1_000 + 24 * 3600 * 1000, _health().to_dict())
-    report = evaluate_soak([first, last], 24 * 3600)
+def _hourly_samples(hours=24):
+    return [
+        SoakSample(1_000 + hour * 3600 * 1000, _health().to_dict())
+        for hour in range(hours + 1)
+    ]
+
+
+def test_clean_24h_soak_passes_only_with_continuous_coverage():
+    report = evaluate_soak(_hourly_samples(24), 24 * 3600, max_gap_seconds=3601)
     assert report.passed
     assert report.unhealthy_samples == 0
+    assert report.gap_violation_count == 0
+    assert report.max_sample_gap_seconds == 3600
     assert report.max_open_failures == 0
     assert report.max_signal_to_order_p95_ms == 125.0
+
+
+def test_24h_endpoints_with_large_missing_gap_fail():
+    first = SoakSample(1_000, _health().to_dict())
+    last = SoakSample(1_000 + 24 * 3600 * 1000, _health().to_dict())
+    report = evaluate_soak([first, last], 24 * 3600, max_gap_seconds=180)
+    assert not report.passed
+    assert report.gap_violation_count == 1
+    assert report.max_sample_gap_seconds == 24 * 3600
 
 
 def test_short_soak_fails_even_if_every_sample_is_healthy():
     first = SoakSample(1_000, _health().to_dict())
     last = SoakSample(1_000 + 3600 * 1000, _health().to_dict())
-    report = evaluate_soak([first, last], 24 * 3600)
+    report = evaluate_soak([first, last], 24 * 3600, max_gap_seconds=3601)
     assert not report.passed
     assert report.observed_seconds == 3600
 
 
 def test_any_protection_gap_or_open_failure_fails_soak():
-    clean = SoakSample(1_000, _health().to_dict())
+    rows = _hourly_samples(24)
     bad = _health(
         healthy=False,
         missing_stops=("SOLUSDT",),
         runtime_stats={"open_failures": 1, "signal_to_order_p95_ms": 200.0},
     )
-    last = SoakSample(1_000 + 24 * 3600 * 1000, bad.to_dict())
-    report = evaluate_soak([clean, last], 24 * 3600)
+    rows[12] = SoakSample(rows[12].timestamp_ms, bad.to_dict())
+    report = evaluate_soak(rows, 24 * 3600, max_gap_seconds=3601)
     assert not report.passed
     assert report.protection_gap_samples == 1
     assert report.max_open_failures == 1
