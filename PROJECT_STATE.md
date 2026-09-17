@@ -24,6 +24,7 @@ SignalGrid V1 is a small event-driven Binance USDⓈ-M Futures engine with exact
 - Keep transport, signal logic, risk, execution and persistence separated.
 - V1 execution/account state requires Binance one-way position mode; hedge-mode state fails closed.
 - New entries require an open State/Ops execution gate. Missing gate is fail-closed by default.
+- Historical validation must not synthesize missing order-book data.
 
 ## Current verified baseline
 - Public event parser: `aggTrade`, `bookTicker`, `kline`.
@@ -33,6 +34,7 @@ SignalGrid V1 is a small event-driven Binance USDⓈ-M Futures engine with exact
 - Execution: authenticated Binance REST adapter, deterministic client IDs, symbol-filter rounding, MARKET entry, Algo STOP_MARKET protection, deterministic error classes.
 - State/Ops: SQLite WAL persistence for positions, normal orders, algo orders, processed events and runtime gates.
 - Recovery: authenticated user-data stream, startup/reconnect REST reconciliation, buffered gap closure, duplicate/stale event handling and fail-closed mismatch behavior.
+- Offline validation: production SignalEngine replay, next-bar execution, realistic fee/spread/slippage model, funding hook, OOS walk-forward and parameter-stability report.
 
 ## Milestones
 - [x] M0 project skeleton
@@ -44,18 +46,23 @@ SignalGrid V1 is a small event-driven Binance USDⓈ-M Futures engine with exact
 - [x] M2 multi-symbol scanner (30-50 symbols)
 - [x] M3 authenticated Binance execution adapter
 - [x] M4 user-data reconciliation and restart recovery
-- [ ] M5 backtest/walk-forward harness
+- [x] M5 backtest/walk-forward harness
 - [ ] M6 paper/testnet validation
 
 ## Latest checkpoint
-- M3 execution uses deterministic `idempotency_key` -> client IDs, LOT_SIZE/PRICE_FILTER/MIN_NOTIONAL enforcement, MARKET entry and Binance Algo Order STOP_MARKET protection.
 - M4 tracks `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, `ALGO_UPDATE`, listen-key expiry and critical account-risk events.
 - Open normal orders, open algo orders and one-way positions are reconciled against Binance REST on startup/reconnect.
 - User events are buffered while the REST snapshot is taken, then drained before the execution gate opens.
-- SDK callbacks are marshalled to the StateStore-owning asyncio loop; SQLite is never used from callback/network worker threads.
 - Duplicate/stale events are idempotent; fill regression, identity conflict, foreign order activity, hedge-mode state, margin call and reconciliation mismatch fail closed.
 - New entries are blocked unless `execution_ready=True`; protective/cancel paths remain available for risk reduction.
-- Local full suite: `44 passed` on 2026-09-17.
+- M5 reuses the production `SignalEngine`; there is no duplicate backtest strategy implementation.
+- M5 data loaders support Binance USD-M kline, bookTicker and fundingRate CSV archive shapes and sort out-of-order historical bookTicker rows.
+- Historical book snapshots are attached only at-or-before each bar close; future snapshots are never used.
+- Full-core historical runs fail closed when book coverage is missing; no synthetic order book is substituted.
+- Signal decisions occur at bar close and may execute only at the next bar open.
+- Costs include configurable taker fees, assumed spread, slippage and funding cashflows.
+- Walk-forward selects candidates on train windows and reports following OOS windows only; parameter-neighborhood stability is tracked separately from best-point performance.
+- Local M5-specific verification: `9 passed` + `compileall` PASS on 2026-09-17. Repository CI remains source of truth for the full suite.
 
 ## Immediate next task
-Implement M5 as a deliberately small offline backtest/walk-forward harness for the existing V1 signal core only. Include realistic fees, spread/slippage, funding hook, no-lookahead event ordering, per-symbol/OOS metrics and parameter-stability checks. Do not add new signal families during M5.
+Implement M6 paper/testnet validation without adding strategy features: wire the existing scanner -> risk -> execution -> State/Ops path to Binance USD-M testnet/paper mode, record signal-to-order latency, fills/slippage, orphan/duplicate-order incidents, restart recovery, and 24h/72h soak-test health. No live-capital deployment until M6 is clean.
