@@ -114,13 +114,14 @@ class SignalGridRuntime:
 
     @classmethod
     def from_environment(cls, config: RuntimeConfig) -> "SignalGridRuntime":
-        from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futures import (
-            ConfigurationRestAPI,
-            ConfigurationWebSocketStreams,
+        from binance_common.configuration import ConfigurationRestAPI, ConfigurationWebSocketStreams
+        from binance_common.constants import (
             DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL,
             DERIVATIVES_TRADING_USDS_FUTURES_REST_API_TESTNET_URL,
             DERIVATIVES_TRADING_USDS_FUTURES_WS_STREAMS_PROD_URL,
             DERIVATIVES_TRADING_USDS_FUTURES_WS_STREAMS_TESTNET_URL,
+        )
+        from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futures import (
             DerivativesTradingUsdsFutures,
         )
 
