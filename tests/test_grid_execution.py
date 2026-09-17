@@ -75,7 +75,7 @@ def test_grid_fails_without_volatility_warmup():
 def test_paper_campaign_fills_pullback_and_closes_at_global_tp():
     s = state()
     plan = build_grid_plan(signal(s), decision(), s)
-    broker = PaperGridBroker()
+    broker = PaperGridBroker(suppress_same_event_reopen=False)
     campaign = broker.open_campaign(plan)
     assert len(campaign.fills) == 1
     assert len(broker.position_views()) == 1
@@ -96,6 +96,34 @@ def test_paper_campaign_fills_pullback_and_closes_at_global_tp():
     assert closed.close_reason == "TAKE_PROFIT"
     assert broker.active_campaign(plan.symbol) is None
     assert broker.position_views() == []
+
+
+def test_same_market_event_cannot_close_and_reopen_paper_campaign():
+    s = state()
+    plan = build_grid_plan(signal(s), decision(), s)
+    broker = PaperGridBroker()
+    broker.open_campaign(plan)
+
+    s.best_bid = plan.take_profit + 0.01
+    s.best_ask = plan.take_profit + 0.02
+    closed = broker.on_state(s)
+    assert closed is not None and closed.status == "CLOSED"
+    assert broker.position_views() == []
+    assert broker.active_campaign(plan.symbol) is closed
+
+    try:
+        broker.open_campaign(plan)
+    except PaperExecutionError:
+        pass
+    else:
+        raise AssertionError("same market event must not close and immediately reopen")
+
+    s.last_event_time_ms += 1
+    assert broker.on_state(s) is None
+    assert broker.active_campaign(plan.symbol) is None
+    next_plan = build_grid_plan(signal(s), decision(), s)
+    broker.open_campaign(next_plan)
+    assert broker.active_campaign(plan.symbol) is not None
 
 
 def test_only_one_campaign_per_symbol_and_no_unbounded_refill():
