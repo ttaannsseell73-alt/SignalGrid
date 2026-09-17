@@ -3,71 +3,80 @@
 ## Canonical repository
 - Repo: `ttaannsseell73-alt/SignalGrid`
 - Canonical branch: `main`
-- Development rule: every meaningful tested increment is committed atomically; this file is updated at every checkpoint.
-- Recovery rule: after any chat/tool interruption, resume from GitHub HEAD + this file, never from conversation memory alone.
+- Recovery rule: after any interruption, resume from GitHub HEAD + this file, never from conversation memory alone.
+- Commit rule: only tested increments are merged to `main`; feature branches may contain intermediate commits and merge by squash.
 
-## Canonical scope
-SignalGrid V1 remains a small event-driven Binance USDⓈ-M Futures engine with exactly five hubs:
+## Locked V1 scope
+SignalGrid V1 has exactly five hubs:
 1. Market Data
 2. Signal
 3. Risk
 4. Execution
 5. State/Ops
 
-## Locked constraints
-- Maximum active positions: configurable; V1 default 10.
-- Signal core: volatility + structure + flow + liquidity gate.
-- No extra signal family enters live V1 without OOS evidence replacing, not stacking on, an existing feature.
-- Binance only in V1; no multi-exchange runtime.
-- No Hummingbot/Freqtrade/Passivbot runtime dependency.
+Locked constraints:
+- Binance USDⓈ-M Futures only in V1.
+- Default maximum active positions: 10.
+- Signal core remains volatility + structure + flow + liquidity gate.
+- No new signal family without OOS evidence replacing, not stacking on, an existing feature.
 - One-way position mode only; hedge-mode state fails closed.
 - New entries require an open State/Ops execution gate.
-- Missing historical order-book data is never synthesized.
-- Grid campaigns are bounded directional grids: one active campaign per symbol, default 4 entries, 40% starter MARKET, finite pullback LIMITs, NATR-bounded spacing, one global STOP and one global TP.
-- No martingale, unbounded averaging, automatic refill or infinite grid.
-- No live-capital mode until M6 paper/testnet validation is clean.
+- Bounded directional grid only: default 4 entries, 40% starter MARKET, finite pullback LIMITs, NATR-bounded spacing, global STOP + global TP.
+- No martingale, unbounded averaging, refill or infinite grid.
+- No live-capital mode during M6.
 
-## Current verified baseline
-- Public parser/transport: `aggTrade`, `bookTicker`, `kline`, stream sharding/reconnect.
-- Signal: NATR + vol expansion + breakout/failed-breakout + taker/book imbalance + spread gate.
-- Risk: max positions, total notional cap, per-symbol active guard, signal-strength sizing.
+## Verified baseline on main
+- Market: `aggTrade`, `bookTicker`, `kline`, stream sharding/reconnect, 60 closed-bar startup warmup.
+- Signal: NATR, volatility expansion, breakout/failed breakout, taker imbalance, order-book imbalance, spread gate.
+- Risk: max positions, total notional cap, per-symbol guard, signal-strength sizing.
 - Scanner: event-driven up to 50 symbols, freshness gate, debounce, latency observability.
-- Execution: MARKET starter, LIMIT GTC grid entries, Algo STOP_MARKET, Algo TAKE_PROFIT_MARKET, reduce-only emergency MARKET close, deterministic client IDs and symbol-filter rounding.
-- Campaign ownership: persisted grid registry, deterministic expected order IDs, cleanup and restart recovery.
-- State/Ops: SQLite WAL positions/orders/algo orders/events/runtime gates.
-- Recovery: user-data stream + REST reconciliation + buffered gap closure + duplicate/stale handling + fail-closed mismatch behavior.
-- Offline validation: production SignalEngine replay, next-bar execution, fee/spread/slippage/funding model, OOS walk-forward and parameter stability.
-- Runtime branch: PAPER/TESTNET coordinator, 60 closed-bar warmup, runtime stats, signal-to-order latency, reconnect-safe post-reconcile campaign recovery.
+- Execution: MARKET starter, LIMIT GTC grid entries, Algo STOP_MARKET, Algo TAKE_PROFIT_MARKET, reduce-only emergency close.
+- Campaign ownership: deterministic IDs, persisted registry, restart/reconnect recovery, flat cleanup.
+- State/Ops: SQLite WAL orders/algo orders/positions/events/runtime gates.
+- Recovery: user-data stream + REST reconciliation + buffered gap closure + post-reconcile campaign recovery before gate reopen.
+- Offline validation: production SignalEngine replay, next-bar execution, fees/spread/slippage/funding, OOS walk-forward, parameter stability.
+- Runtime: explicit PAPER and Binance TESTNET modes with persisted runtime state and signal-to-order latency stats.
+
+## Canonical main checkpoints
+- M5 backtest/walk-forward: `0fe39210b736c788e9149af12faf3b5ecfc19366`
+- M6 bounded-grid preflight: `08531441d33992e649c953fdf6c9eb6bec98087f`
+- M6 Binance execution plumbing: `952abbceccab628746953b8c052c19531143a4bb`
+- M6 PAPER/TESTNET runtime + reconnect-safe recovery: `c43c9638beecfc1beeb33c0b2f996201de7501e4`
 
 ## Milestones
 - [x] M0 project skeleton
-- [x] M1 live Binance public WebSocket transport
-- [x] M2 multi-symbol scanner (30-50 symbols)
-- [x] M3 authenticated Binance execution adapter
-- [x] M4 user-data reconciliation and restart recovery
+- [x] M1 public WebSocket transport
+- [x] M2 30-50 symbol scanner
+- [x] M3 authenticated execution adapter
+- [x] M4 reconciliation/restart recovery
 - [x] M5 backtest/walk-forward harness
-- [x] M6 bounded-grid preflight
-- [x] M6 Binance bounded-grid execution plumbing
-- [ ] M6 PAPER/TESTNET runtime CI + soak validation
-
-## Latest canonical main checkpoints
-- M5 merged: `0fe39210b736c788e9149af12faf3b5ecfc19366`
-- Bounded-grid preflight merged: `08531441d33992e649c953fdf6c9eb6bec98087f`
-- Binance bounded-grid execution plumbing merged: `952abbceccab628746953b8c052c19531143a4bb`
+- [x] M6 bounded-grid execution shape
+- [x] M6 PAPER/TESTNET runtime wiring
+- [ ] M6 soak telemetry merge
+- [ ] M6 PAPER 24h soak
+- [ ] M6 TESTNET 24h soak
+- [ ] M6 TESTNET 72h soak
 
 ## Active work
-- Branch: `m6-runtime-paper-testnet`
-- PR: `#6` — M6 runtime: PAPER/TESTNET coordinator and reconnect-safe recovery.
-- Runtime modes are explicit: PAPER uses production public market data with local execution simulation; TESTNET uses Binance USD-M testnet REST/WebSocket endpoints and authenticated State/Ops reconciliation.
-- Startup warmup loads the latest 60 closed 1m bars and rejects insufficient history.
-- TESTNET scanner does not evaluate entries while `execution_ready=False`.
-- Every user-stream session, including reconnects, executes campaign recovery after REST/WebSocket reconciliation and before the execution gate reopens.
-- A failed post-reconcile recovery halts and leaves the gate closed.
-- PAPER runtime persists runtime status and stats; TESTNET runtime persists campaign/recovery/latency state.
-- New runtime tests cover warmup, closed execution gate, paper campaign opening, persisted stats, post-reconcile ordering and failed recovery.
+- Branch: `m6-soak-telemetry`
+- Added `signalgrid.ops.health`:
+  - detects halted runtime
+  - orphan account positions
+  - unowned active normal/algo orders
+  - active positions missing owned STOP or TAKE_PROFIT
+  - TESTNET gate/user-stream readiness
+  - exposes runtime latency/open-failure stats
+- Added `signalgrid.ops.soak`:
+  - JSONL health journal
+  - 24h/72h duration evaluation
+  - fails on any unhealthy sample, halt, protection gap, orphan state or campaign-open failure
+  - reports maximum observed signal-to-order p95 latency
+- Added same-market-event PAPER re-entry suppression so one event cannot close and immediately reopen the same campaign.
+- README includes PAPER, TESTNET, health and soak commands.
 
 ## Immediate next task
-1. Run PR #6 full CI on Python 3.11/3.12/3.13 and fix any failures.
-2. Add/verify same-event paper close protection and operational observability for fills/slippage/orphan/duplicate incidents.
-3. Squash-merge runtime only after CI is fully green.
-4. Start PAPER soak validation first, then Binance TESTNET soak validation with explicit API credentials. No live capital.
+1. Run full CI for `m6-soak-telemetry` on Python 3.11/3.12/3.13 and fix any regression.
+2. Squash-merge only if all CI jobs pass.
+3. Begin real PAPER soak on a continuously running machine and journal health samples.
+4. After clean PAPER validation, run Binance TESTNET 24h then 72h soak with testnet API credentials.
+5. Do not enable live capital in M6.
