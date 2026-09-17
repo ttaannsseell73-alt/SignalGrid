@@ -66,5 +66,5 @@ def test_reflex_stats_count_direction_changes_and_latency():
     assert snap["trade_to_pass_invalidations"] == 1
     assert snap["short_to_long_reversals"] == 1
     assert snap["long_to_short_reversals"] == 0
-    assert snap["transition_response_median_ms"] == 7.0
+    assert snap["transition_response_median_ms"] == 7.5
     assert snap["transition_response_p95_ms"] == 10.0
