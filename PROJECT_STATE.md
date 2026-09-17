@@ -46,6 +46,7 @@ Locked constraints:
 - M6 Binance execution plumbing: `952abbceccab628746953b8c052c19531143a4bb`
 - M6 PAPER/TESTNET runtime + reconnect-safe recovery: `c43c9638beecfc1beeb33c0b2f996201de7501e4`
 - M6 soak telemetry + PAPER re-entry hardening: `a25d80bf1be5d34b5e4d82b710f99fdd03e4973d`
+- Canonical state checkpoint after telemetry merge: `984086e14b8b75306d0f0edb435a33cf53f81df8`
 
 ## Milestones
 - [x] M0 project skeleton
@@ -57,17 +58,22 @@ Locked constraints:
 - [x] M6 bounded-grid execution shape
 - [x] M6 PAPER/TESTNET runtime wiring
 - [x] M6 soak telemetry merge
+- [ ] M6 one-command soak runner merge
 - [ ] M6 PAPER 24h soak
 - [ ] M6 TESTNET 24h soak
 - [ ] M6 TESTNET 72h soak
 
-## Latest verification
-- PR #7 (`m6-soak-telemetry`) merged by squash.
-- PR #7 CI: Python 3.11 PASS, 3.12 PASS, 3.13 PASS.
-- No live-capital path is enabled.
+## Active work
+- Branch: `m6-one-command-soak`
+- Hardened soak evaluation with a maximum allowed sample gap. A journal can no longer pass merely because its first and last healthy samples are 24h apart.
+- Added `signalgrid.ops.run_soak` to start PAPER/TESTNET runtime and health sampling together, wait for LIVE state, journal automatically, fail fast on unhealthy state and emit the final report.
+- Runner defaults the allowed telemetry gap to 2.5x the requested sample interval.
+- Existing non-empty journals are rejected by default to prevent accidental cross-run mixing; `--overwrite-journal` is explicit.
+- Added tests for continuous coverage, missing-gap failure, healthy one-command PAPER soak and fail-fast halt behavior.
+- README documents one-command PAPER 24h, TESTNET 24h and TESTNET 72h usage.
 
 ## Immediate next task
-1. Run real PAPER mode continuously and journal health snapshots for 24 hours.
-2. PAPER soak passes only if the full duration is covered with zero unhealthy samples, halts, orphan/protection incidents or campaign-open failures.
-3. After clean PAPER validation, run Binance TESTNET 24h, then TESTNET 72h with explicit testnet credentials.
-4. Do not enable live capital until M6 soak validation is clean and reviewed.
+1. Run full CI for `m6-one-command-soak` on Python 3.11/3.12/3.13 and fix any regression.
+2. Squash-merge only if all CI jobs pass.
+3. After merge, the remaining M6 work is empirical: PAPER 24h -> TESTNET 24h -> TESTNET 72h, in that order.
+4. No live-capital mode until all M6 soak gates are clean and reviewed.
