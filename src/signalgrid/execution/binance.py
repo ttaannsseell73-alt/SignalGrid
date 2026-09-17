@@ -36,6 +36,10 @@ class BinanceNetworkError(ExecutionError):
     code = "BINANCE_NETWORK"
 
 
+class ExecutionBlockedError(ExecutionError):
+    code = "EXECUTION_BLOCKED"
+
+
 @dataclass(frozen=True, slots=True)
 class SymbolRules:
     step_size: Decimal
@@ -151,10 +155,12 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
         rest_api: Any,
         price_provider: Callable[[str], float],
         exchange_info_provider: Callable[[], Any] | None = None,
+        execution_gate: Callable[[], bool] | None = None,
     ) -> None:
         self.rest_api = rest_api
         self.price_provider = price_provider
         self.exchange_info_provider = exchange_info_provider or rest_api.exchange_information
+        self.execution_gate = execution_gate
         self._rules: dict[str, SymbolRules] = {}
 
     def _rules_for(self, symbol: str) -> SymbolRules:
@@ -168,6 +174,7 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
 
     async def place_entry_receipt(self, intent: OrderIntent) -> ExecutionReceipt:
         self._validate(intent)
+        self._ensure_entry_ready()
         symbol = intent.symbol.upper()
         rules = self._rules_for(symbol)
         reference_price = _d(
@@ -227,6 +234,12 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
             self.rest_api.cancel_order(symbol=symbol.upper(), order_id=int(order_id))
         except Exception as exc:
             raise map_binance_error(exc) from exc
+
+    def _ensure_entry_ready(self) -> None:
+        if self.execution_gate is None:
+            raise ExecutionBlockedError("execution gate is not configured")
+        if not self.execution_gate():
+            raise ExecutionBlockedError("execution is not ready; reconciliation/user-stream gate is closed")
 
     @staticmethod
     def _validate(intent: OrderIntent) -> None:
