@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
-from typing import Any, Callable
+from inspect import isawaitable
+from typing import Any, Awaitable, Callable
 
 from signalgrid.state.reconciliation import (
     AccountReconciler,
@@ -15,6 +16,7 @@ from signalgrid.state.store import StateStore
 from signalgrid.state.user_data import BinanceUserDataProcessor, UserDataResult
 
 UserEventCallback = Callable[[UserDataResult], None]
+ReconciledCallback = Callable[[], Awaitable[None] | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,9 +73,11 @@ class BinanceUserStreamTransport:
       3) buffer incoming account events
       4) REST reconcile while the stream is already attached
       5) drain buffered events in order
-      6) enable execution
+      6) run post-reconcile ownership/recovery checks
+      7) enable execution
 
-    This closes the REST/WebSocket gap without putting strategy logic in State/Ops.
+    The post-reconcile callback runs on every session, including reconnects,
+    before the entry gate can reopen.
     """
 
     def __init__(
@@ -117,6 +121,7 @@ class BinanceUserStreamTransport:
         self,
         stop_event: asyncio.Event | None = None,
         on_event: UserEventCallback | None = None,
+        on_reconciled: ReconciledCallback | None = None,
     ) -> None:
         stop = stop_event or asyncio.Event()
         failures = 0
@@ -124,7 +129,7 @@ class BinanceUserStreamTransport:
             if self.store.halted():
                 raise StateMismatchError(self.store.halt_reason() or "HALTED")
             try:
-                reconnect = await self._run_session(stop, on_event)
+                reconnect = await self._run_session(stop, on_event, on_reconciled)
                 failures = 0
                 if stop.is_set():
                     return
@@ -150,6 +155,7 @@ class BinanceUserStreamTransport:
         self,
         stop: asyncio.Event,
         on_event: UserEventCallback | None,
+        on_reconciled: ReconciledCallback | None = None,
     ) -> bool:
         self.store.set_execution_ready(False)
         self.store.set_runtime("user_stream_status", "CONNECTING")
@@ -178,8 +184,6 @@ class BinanceUserStreamTransport:
                 session_expired.set()
 
         def handle(data: Any) -> None:
-            # SDK callbacks are treated as thread-agnostic: all StateStore work
-            # is marshalled onto the event loop that owns SQLite.
             loop.call_soon_threadsafe(dispatch, data)
 
         try:
@@ -212,6 +216,21 @@ class BinanceUserStreamTransport:
             if session_expired.is_set():
                 self.store.set_execution_ready(False)
                 return True
+
+            if on_reconciled is not None:
+                try:
+                    maybe_awaitable = on_reconciled()
+                    if isawaitable(maybe_awaitable):
+                        await maybe_awaitable
+                except StateMismatchError:
+                    raise
+                except Exception as exc:
+                    if not self.store.halted():
+                        self.store.halt(f"POST_RECONCILE_RECOVERY_FAILED:{type(exc).__name__}")
+                    raise StateMismatchError(self.store.halt_reason() or "POST_RECONCILE_RECOVERY_FAILED") from exc
+            if self.store.halted():
+                raise StateMismatchError(self.store.halt_reason() or "HALTED")
+
             self.store.set_runtime("user_stream_status", "LIVE")
             self.store.set_execution_ready(True)
 
