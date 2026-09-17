@@ -75,7 +75,13 @@ Write-Host "[SignalGrid] Bu pencereyi kapatmayin. Windows uyku modu bu sure boyu
 Write-Host ""
 
 $exitCode = 1
+$previousErrorActionPreference = $ErrorActionPreference
 try {
+    # Native Python writes tracebacks to stderr. Windows PowerShell can wrap stderr as
+    # NativeCommandError when ErrorActionPreference=Stop, truncating the useful traceback.
+    # Continue here so the complete Python output reaches both console and log.
+    $ErrorActionPreference = "Continue"
+    $env:PYTHONUNBUFFERED = "1"
     & $venvPython -m signalgrid.ops.run_soak `
         --mode paper `
         --symbols $symbols `
@@ -87,6 +93,7 @@ try {
     $exitCode = $LASTEXITCODE
 }
 finally {
+    $ErrorActionPreference = $previousErrorActionPreference
     [void][SignalGrid.Power]::SetThreadExecutionState($ES_CONTINUOUS)
 }
 
