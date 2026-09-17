@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 from signalgrid.engine import SignalGridEngine
 from signalgrid.execution.binance import BinanceRestExecutionAdapter
-from signalgrid.execution.campaign import ACTIVE_CAMPAIGN_STATUSES, GridCampaignExecutor, GridCampaignRegistry
+from signalgrid.execution.campaign import GridCampaignExecutor, GridCampaignRegistry
 from signalgrid.execution.grid import GridConfig, build_grid_plan
 from signalgrid.execution.paper import PaperGridBroker
 from signalgrid.market.binance_events import BinanceMarketEventRouter, EventResult
@@ -49,6 +49,8 @@ class RuntimeConfig:
             raise ValueError("runtime supports at most 50 symbols")
         if self.startup_timeout_seconds <= 0 or self.cleanup_interval_seconds <= 0:
             raise ValueError("runtime timing values must be positive")
+        if self.warmup_bars < 50:
+            raise ValueError("runtime warmup requires at least 50 closed bars")
 
 
 class RuntimeStats:
@@ -57,6 +59,7 @@ class RuntimeStats:
         self.evaluations = 0
         self.signals_emitted = 0
         self.campaigns_opened = 0
+        self.campaigns_closed = 0
         self.open_failures = 0
         self.cleanups = 0
         self._latencies_ms: deque[float] = deque(maxlen=2_000)
@@ -72,6 +75,7 @@ class RuntimeStats:
             "evaluations": self.evaluations,
             "signals_emitted": self.signals_emitted,
             "campaigns_opened": self.campaigns_opened,
+            "campaigns_closed": self.campaigns_closed,
             "open_failures": self.open_failures,
             "cleanups": self.cleanups,
             "signal_to_order_median_ms": median(values) if values else None,
@@ -193,15 +197,21 @@ class SignalGridRuntime:
 
         if self.config.mode is RuntimeMode.PAPER:
             self.store.set_runtime("runtime_status", "PAPER_LIVE")
-            await self.public_transport.run(symbols, self._market_callback, stop)
+            try:
+                await self.public_transport.run(symbols, self._market_callback, stop)
+            finally:
+                self._persist_stats()
+                self.store.set_runtime("runtime_status", "HALTED" if self.store.halted() else "STOPPED")
             return
 
         if self.user_transport is None or self.campaign_executor is None:
             raise RuntimeError("TESTNET runtime components are incomplete")
-        user_task = asyncio.create_task(self.user_transport.run(stop, self._user_callback), name="signalgrid-user")
+        user_task = asyncio.create_task(
+            self.user_transport.run(stop, self._user_callback, self._post_reconcile_recovery),
+            name="signalgrid-user",
+        )
         try:
             await self._wait_execution_ready(user_task, stop)
-            await self.campaign_executor.recover_after_reconciliation()
             cleanup_task = asyncio.create_task(self._cleanup_loop(stop), name="signalgrid-grid-cleanup")
             public_task = asyncio.create_task(self.public_transport.run(symbols, self._market_callback, stop), name="signalgrid-public")
             self.store.set_runtime("runtime_status", "TESTNET_LIVE")
@@ -220,7 +230,14 @@ class SignalGridRuntime:
             if not user_task.done():
                 user_task.cancel()
                 await asyncio.gather(user_task, return_exceptions=True)
+            self._persist_stats()
             self.store.set_runtime("runtime_status", "STOPPED" if not self.store.halted() else "HALTED")
+
+    async def _post_reconcile_recovery(self) -> None:
+        if self.campaign_executor is None:
+            return
+        await self.campaign_executor.recover_after_reconciliation()
+        self.store.set_runtime("last_campaign_recovery_ms", int(time() * 1000))
 
     async def _wait_execution_ready(self, user_task: asyncio.Task[Any], stop: asyncio.Event) -> None:
         deadline = monotonic() + self.config.startup_timeout_seconds
@@ -243,7 +260,11 @@ class SignalGridRuntime:
         self.stats.market_events += 1
         state = self.router.state(event.symbol)
         if self.config.mode is RuntimeMode.PAPER and self.paper_broker is not None:
-            self.paper_broker.on_state(state)
+            active_before = self.paper_broker.active_campaign(state.symbol)
+            updated = self.paper_broker.on_state(state)
+            if active_before is not None and updated is not None and updated.status == "CLOSED":
+                self.stats.campaigns_closed += 1
+                self._persist_stats()
         if self.config.mode is RuntimeMode.TESTNET and not self.store.execution_ready():
             return
         result = self.scanner.on_event(event)
@@ -265,6 +286,7 @@ class SignalGridRuntime:
             self.paper_broker.open_campaign(plan)
             self.stats.campaigns_opened += 1
             self.stats.add_latency(result.market_event_age_ms + (monotonic() - started) * 1000.0)
+            self._persist_stats()
             return
         if self.campaign_executor is None or plan.symbol in self._opening_symbols:
             return
@@ -316,6 +338,7 @@ class SignalGridRuntime:
                 continue
             if await self.campaign_executor.cleanup_if_flat(record.symbol):
                 self.stats.cleanups += 1
+                self.stats.campaigns_closed += 1
 
     def _persist_stats(self) -> None:
         self.store.set_runtime("runtime_stats", json.dumps(self.stats.snapshot(), sort_keys=True))
