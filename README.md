@@ -26,7 +26,7 @@ A valid signal maps to one finite campaign per symbol:
 
 - 40% starter MARKET entry
 - three finite pullback LIMIT entries by default
-- NATR-derived spacing, bounded to safe configured limits
+- NATR-derived spacing, bounded to configured limits
 - one global STOP_MARKET
 - one global TAKE_PROFIT_MARKET
 - deterministic client IDs and campaign ownership
@@ -104,19 +104,50 @@ Health fails when it detects conditions such as:
 - active position missing its campaign TAKE_PROFIT
 - TESTNET execution/user stream not ready
 
-Append a soak sample:
+Manual journal tools remain available:
 
 ```bash
 python -m signalgrid.ops.soak sample --db signalgrid.db --journal soak.jsonl
+python -m signalgrid.ops.soak report --journal soak.jsonl --required-hours 24 --max-gap-seconds 180 --pretty
 ```
 
-Evaluate a 24-hour soak:
+The report enforces continuous coverage. It does not accept two healthy samples many hours apart as a valid soak; any interval larger than `--max-gap-seconds` invalidates the run.
+
+### One-command PAPER soak
+
+This starts the runtime, waits for LIVE status, samples health, journals continuously and prints the final report:
 
 ```bash
-python -m signalgrid.ops.soak report --journal soak.jsonl --required-hours 24 --pretty
+python -m signalgrid.ops.run_soak \
+  --mode paper \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT \
+  --hours 24 \
+  --sample-seconds 60 \
+  --db signalgrid-paper.db \
+  --journal paper-24h.jsonl \
+  --overwrite-journal \
+  --pretty
 ```
 
-A soak does not pass unless the requested duration is observed with zero unhealthy samples, zero halts, zero protection gaps, zero orphan-state samples and zero campaign-open failures.
+### One-command TESTNET soak
+
+After PAPER is clean and testnet credentials are set:
+
+```bash
+python -m signalgrid.ops.run_soak \
+  --mode testnet \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT \
+  --hours 24 \
+  --sample-seconds 60 \
+  --db signalgrid-testnet.db \
+  --journal testnet-24h.jsonl \
+  --overwrite-journal \
+  --pretty
+```
+
+For the later 72-hour gate, change `--hours 24` to `--hours 72` and use a fresh journal path.
+
+A soak does not pass unless the requested duration is continuously covered with zero unhealthy samples, zero halts, zero protection gaps, zero orphan-state samples, zero campaign-open failures and no excessive gap in telemetry samples. The one-command runner stops early on an unhealthy sample instead of wasting the remaining soak window.
 
 No live-capital mode is enabled by M6. PAPER must be clean before TESTNET validation, and TESTNET must be clean before any later live-capital work is considered.
 

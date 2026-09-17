@@ -27,6 +27,8 @@ class SoakReport:
     halted_samples: int
     protection_gap_samples: int
     orphan_state_samples: int
+    gap_violation_count: int
+    max_sample_gap_seconds: float
     max_open_failures: int
     max_signal_to_order_p95_ms: float | None
 
@@ -62,14 +64,27 @@ def load_samples(path: str | Path) -> list[SoakSample]:
     return out
 
 
-def evaluate_soak(samples: Iterable[SoakSample], required_seconds: int) -> SoakReport:
+def evaluate_soak(
+    samples: Iterable[SoakSample],
+    required_seconds: int,
+    max_gap_seconds: float = 180.0,
+) -> SoakReport:
     rows = sorted(samples, key=lambda x: x.timestamp_ms)
     if required_seconds <= 0:
         raise ValueError("required_seconds must be positive")
+    if max_gap_seconds <= 0:
+        raise ValueError("max_gap_seconds must be positive")
     if not rows:
-        return SoakReport(False, required_seconds, 0.0, 0, 0, 0, 0, 0, 0, None)
+        return SoakReport(False, required_seconds, 0.0, 0, 0, 0, 0, 0, 0, 0.0, 0, None)
 
     observed_seconds = max(0.0, (rows[-1].timestamp_ms - rows[0].timestamp_ms) / 1000.0)
+    gaps = [
+        max(0.0, (right.timestamp_ms - left.timestamp_ms) / 1000.0)
+        for left, right in zip(rows, rows[1:])
+    ]
+    max_sample_gap = max(gaps) if gaps else 0.0
+    gap_violations = sum(1 for gap in gaps if gap > max_gap_seconds)
+
     unhealthy = 0
     halted = 0
     protection_gaps = 0
@@ -102,6 +117,7 @@ def evaluate_soak(samples: Iterable[SoakSample], required_seconds: int) -> SoakR
     passed = (
         len(rows) >= 2
         and observed_seconds >= required_seconds
+        and gap_violations == 0
         and unhealthy == 0
         and halted == 0
         and protection_gaps == 0
@@ -117,6 +133,8 @@ def evaluate_soak(samples: Iterable[SoakSample], required_seconds: int) -> SoakR
         halted_samples=halted,
         protection_gap_samples=protection_gaps,
         orphan_state_samples=orphan_states,
+        gap_violation_count=gap_violations,
+        max_sample_gap_seconds=max_sample_gap,
         max_open_failures=max_open_failures,
         max_signal_to_order_p95_ms=max(p95_values) if p95_values else None,
     )
@@ -133,6 +151,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     report_parser = sub.add_parser("report")
     report_parser.add_argument("--journal", default="soak.jsonl")
     report_parser.add_argument("--required-hours", type=float, default=24.0)
+    report_parser.add_argument("--max-gap-seconds", type=float, default=180.0)
     report_parser.add_argument("--pretty", action="store_true")
 
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -146,7 +165,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             store.close()
 
     required_seconds = int(args.required_hours * 3600)
-    report = evaluate_soak(load_samples(args.journal), required_seconds)
+    report = evaluate_soak(load_samples(args.journal), required_seconds, args.max_gap_seconds)
     print(json.dumps(report.to_dict(), indent=2 if args.pretty else None, sort_keys=True))
     return 0 if report.passed else 2
 
