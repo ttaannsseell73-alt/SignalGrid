@@ -3,17 +3,16 @@ from dataclasses import dataclass
 from typing import Any
 from signalgrid.market.state import Bar, SymbolState
 
+
 @dataclass(slots=True)
 class EventResult:
     symbol: str
     kind: str
     changed: bool
 
-class BinanceMarketEventRouter:
-    """Pure event parser/state updater for Binance USDⓈ-M public stream payloads.
 
-    Transport is intentionally separate. This class is deterministic and testable.
-    """
+class BinanceMarketEventRouter:
+    """Pure event parser/state updater for Binance USDⓈ-M public stream payloads."""
 
     def __init__(self):
         self.states: dict[str, SymbolState] = {}
@@ -32,14 +31,14 @@ class BinanceMarketEventRouter:
         if not symbol:
             return None
         state = self.state(symbol)
+        event_time = int(data.get("E") or data.get("T") or 0)
+        if event_time:
+            state.last_event_time_ms = max(state.last_event_time_ms or 0, event_time)
 
         if event == "aggTrade":
             quote = float(data["p"]) * float(data["q"])
-            buyer_is_maker = bool(data.get("m", False))
-            if buyer_is_maker:
-                state.taker_sell_quote += quote
-            else:
-                state.taker_buy_quote += quote
+            trade_time = int(data.get("T") or data.get("E") or 0)
+            state.add_taker_trade(trade_time, quote, bool(data.get("m", False)))
             return EventResult(state.symbol, "aggTrade", True)
 
         if event == "bookTicker":

@@ -22,7 +22,9 @@ No AI, ML, TradingView dependency, Hummingbot runtime, Freqtrade runtime, Nautil
 
 ## Current milestone
 
-`M0`: deterministic signal kernel + risk gate + SQLite state + event-driven skeleton.
+`M1`: deterministic signal kernel + risk gate + SQLite state + resilient Binance public WebSocket transport.
+
+Live public transport uses the official Binance USDⓈ-M Futures SDK, shards symbols across connections, subscribes to aggregate trades / book ticker / 1m kline, and rotates long-lived connections before the 24h boundary.
 
 Run tests:
 
