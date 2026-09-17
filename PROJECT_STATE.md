@@ -36,7 +36,7 @@ SignalGrid V1 is a small event-driven Binance USDⓈ-M Futures engine with exact
 - [x] SQLite state store
 - [x] Binance public payload parser
 - [x] M1 live Binance public WebSocket transport
-- [ ] M2 multi-symbol scanner (30-50 symbols)
+- [x] M2 multi-symbol scanner (30-50 symbols)
 - [ ] M3 authenticated Binance execution adapter
 - [ ] M4 user-data reconciliation and restart recovery
 - [ ] M5 backtest/walk-forward harness
@@ -48,7 +48,8 @@ SignalGrid V1 is a small event-driven Binance USDⓈ-M Futures engine with exact
 - Per symbol subscriptions: aggregate trades + individual book ticker + 1m kline.
 - SDK reconnect settings plus outer setup backoff and planned 23h connection rotation.
 - Taker flow is bucketed by minute; late prior-bucket trades are ignored.
-- Local tests: `14 passed` on 2026-09-17.
+- M2 scanner: up to 50 symbols, per-symbol evaluation throttle, market-data freshness gate, signal debounce, market-event age and compute-latency observability.
+- Local tests: `19 passed` on 2026-09-17.
 
 ## Immediate next task
-Implement M2: event-driven multi-symbol scanner/orchestrator for 30-50 symbols, with bounded evaluation frequency, signal debounce, data-freshness gate and observable signal-to-decision latency. No new signal family during M2.
+Implement M3 authenticated Binance execution adapter behind the existing execution port: idempotent client order IDs, symbol filters/rounding, entry + protective exit intents, and deterministic error mapping. Keep strategy logic out of execution.
