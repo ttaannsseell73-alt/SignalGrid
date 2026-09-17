@@ -28,6 +28,7 @@ SignalGrid V1 is a small event-driven Binance USDⓈ-M Futures engine with exact
 - Signal primitives: NATR, volatility expansion, breakout/failed-breakout, taker imbalance, top-of-book imbalance, spread gate.
 - Risk: max positions, total notional cap, per-symbol active-position guard, signal-strength sizing.
 - State: SQLite position persistence.
+- Execution: authenticated Binance REST adapter boundary, deterministic client IDs, symbol-filter rounding, MARKET entry, Algo STOP_MARKET protection, deterministic error classes.
 
 ## Milestones
 - [x] M0 project skeleton
@@ -37,19 +38,17 @@ SignalGrid V1 is a small event-driven Binance USDⓈ-M Futures engine with exact
 - [x] Binance public payload parser
 - [x] M1 live Binance public WebSocket transport
 - [x] M2 multi-symbol scanner (30-50 symbols)
-- [ ] M3 authenticated Binance execution adapter
+- [x] M3 authenticated Binance execution adapter
 - [ ] M4 user-data reconciliation and restart recovery
 - [ ] M5 backtest/walk-forward harness
 - [ ] M6 paper/testnet validation
 
 ## Latest checkpoint
-- M1 live public transport implemented against Binance official USDⓈ-M Futures SDK.
-- Stream sharding default: 20 symbols per connection.
-- Per symbol subscriptions: aggregate trades + individual book ticker + 1m kline.
-- SDK reconnect settings plus outer setup backoff and planned 23h connection rotation.
-- Taker flow is bucketed by minute; late prior-bucket trades are ignored.
-- M2 scanner: up to 50 symbols, per-symbol evaluation throttle, market-data freshness gate, signal debounce, market-event age and compute-latency observability.
-- Local tests: `19 passed` on 2026-09-17.
+- M1 public transport: official Binance USDⓈ-M SDK, stream sharding, aggTrade/bookTicker/1m kline.
+- M2 scanner: up to 50 symbols, per-symbol evaluation throttle, freshness gate, signal debounce, latency observability.
+- M3 execution: deterministic `idempotency_key` -> client order IDs, LOT_SIZE/PRICE_FILTER/MIN_NOTIONAL enforcement, MARKET entry orders and current Binance Algo Order STOP_MARKET protection.
+- Protective conditional orders use `new_algo_order`/`/fapi/v1/algoOrder`; legacy STOP_MARKET through `/fapi/v1/order` is not used.
+- M3 pure execution tests passed locally on 2026-09-17; repository CI remains source of truth for full-suite verification.
 
 ## Immediate next task
-Implement M3 authenticated Binance execution adapter behind the existing execution port: idempotent client order IDs, symbol filters/rounding, entry + protective exit intents, and deterministic error mapping. Keep strategy logic out of execution.
+Implement M4: authenticated user-data stream + REST reconciliation on startup/reconnect, persisted order/position state, duplicate/fill/cancel idempotency, and fail-closed mismatch handling. No new strategy features during M4.

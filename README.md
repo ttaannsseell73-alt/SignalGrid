@@ -22,9 +22,9 @@ No AI, ML, TradingView dependency, Hummingbot runtime, Freqtrade runtime, Nautil
 
 ## Current milestone
 
-`M2`: deterministic signal kernel + risk gate + SQLite state + resilient Binance public WebSocket transport + bounded multi-symbol scanner (up to 50 symbols) with freshness/debounce/latency guards.
+`M3`: live market transport + bounded multi-symbol scanner + authenticated Binance execution adapter.
 
-Live public transport uses the official Binance USDⓈ-M Futures SDK, shards symbols across connections, subscribes to aggregate trades / book ticker / 1m kline, and rotates long-lived connections before the 24h boundary.
+Execution uses deterministic client IDs, exchange symbol filters/rounding and current Binance Algo Order conditional stops (`/fapi/v1/algoOrder`) rather than legacy STOP_MARKET through the normal order endpoint.
 
 Run tests:
 
