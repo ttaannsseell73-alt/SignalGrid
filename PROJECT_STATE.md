@@ -22,13 +22,17 @@ SignalGrid V1 is a small event-driven Binance USDⓈ-M Futures engine with exact
 - TradingView is research/optional input only, never a runtime dependency.
 - No Hummingbot/Freqtrade/Passivbot runtime dependency.
 - Keep transport, signal logic, risk, execution and persistence separated.
+- V1 execution/account state requires Binance one-way position mode; hedge-mode state fails closed.
+- New entries require an open State/Ops execution gate. Missing gate is fail-closed by default.
 
 ## Current verified baseline
 - Public event parser: `aggTrade`, `bookTicker`, `kline`.
 - Signal primitives: NATR, volatility expansion, breakout/failed-breakout, taker imbalance, top-of-book imbalance, spread gate.
 - Risk: max positions, total notional cap, per-symbol active-position guard, signal-strength sizing.
-- State: SQLite position persistence.
-- Execution: authenticated Binance REST adapter boundary, deterministic client IDs, symbol-filter rounding, MARKET entry, Algo STOP_MARKET protection, deterministic error classes.
+- Scanner: event-driven, up to 50 symbols, freshness gate, debounce and compute-latency observability.
+- Execution: authenticated Binance REST adapter, deterministic client IDs, symbol-filter rounding, MARKET entry, Algo STOP_MARKET protection, deterministic error classes.
+- State/Ops: SQLite WAL persistence for positions, normal orders, algo orders, processed events and runtime gates.
+- Recovery: authenticated user-data stream, startup/reconnect REST reconciliation, buffered gap closure, duplicate/stale event handling and fail-closed mismatch behavior.
 
 ## Milestones
 - [x] M0 project skeleton
@@ -39,16 +43,19 @@ SignalGrid V1 is a small event-driven Binance USDⓈ-M Futures engine with exact
 - [x] M1 live Binance public WebSocket transport
 - [x] M2 multi-symbol scanner (30-50 symbols)
 - [x] M3 authenticated Binance execution adapter
-- [ ] M4 user-data reconciliation and restart recovery
+- [x] M4 user-data reconciliation and restart recovery
 - [ ] M5 backtest/walk-forward harness
 - [ ] M6 paper/testnet validation
 
 ## Latest checkpoint
-- M1 public transport: official Binance USDⓈ-M SDK, stream sharding, aggTrade/bookTicker/1m kline.
-- M2 scanner: up to 50 symbols, per-symbol evaluation throttle, freshness gate, signal debounce, latency observability.
-- M3 execution: deterministic `idempotency_key` -> client order IDs, LOT_SIZE/PRICE_FILTER/MIN_NOTIONAL enforcement, MARKET entry orders and current Binance Algo Order STOP_MARKET protection.
-- Protective conditional orders use `new_algo_order`/`/fapi/v1/algoOrder`; legacy STOP_MARKET through `/fapi/v1/order` is not used.
-- M3 pure execution tests passed locally on 2026-09-17; repository CI remains source of truth for full-suite verification.
+- M3 execution uses deterministic `idempotency_key` -> client IDs, LOT_SIZE/PRICE_FILTER/MIN_NOTIONAL enforcement, MARKET entry and Binance Algo Order STOP_MARKET protection.
+- M4 tracks `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, `ALGO_UPDATE`, listen-key expiry and critical account-risk events.
+- Open normal orders, open algo orders and one-way positions are reconciled against Binance REST on startup/reconnect.
+- User events are buffered while the REST snapshot is taken, then drained before the execution gate opens.
+- SDK callbacks are marshalled to the StateStore-owning asyncio loop; SQLite is never used from callback/network worker threads.
+- Duplicate/stale events are idempotent; fill regression, identity conflict, foreign order activity, hedge-mode state, margin call and reconciliation mismatch fail closed.
+- New entries are blocked unless `execution_ready=True`; protective/cancel paths remain available for risk reduction.
+- Local full suite: `44 passed` on 2026-09-17.
 
 ## Immediate next task
-Implement M4: authenticated user-data stream + REST reconciliation on startup/reconnect, persisted order/position state, duplicate/fill/cancel idempotency, and fail-closed mismatch handling. No new strategy features during M4.
+Implement M5 as a deliberately small offline backtest/walk-forward harness for the existing V1 signal core only. Include realistic fees, spread/slippage, funding hook, no-lookahead event ordering, per-symbol/OOS metrics and parameter-stability checks. Do not add new signal families during M5.

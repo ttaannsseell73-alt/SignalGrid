@@ -22,9 +22,11 @@ No AI, ML, TradingView dependency, Hummingbot runtime, Freqtrade runtime, Nautil
 
 ## Current milestone
 
-`M3`: live market transport + bounded multi-symbol scanner + authenticated Binance execution adapter.
+`M4`: live market transport + bounded multi-symbol scanner + authenticated execution + fail-closed account-state recovery.
 
-Execution uses deterministic client IDs, exchange symbol filters/rounding and current Binance Algo Order conditional stops (`/fapi/v1/algoOrder`) rather than legacy STOP_MARKET through the normal order endpoint.
+Execution uses deterministic client IDs, exchange symbol filters/rounding and Binance Algo Order conditional stops (`/fapi/v1/algoOrder`). New entries are safe-by-default: they require the State/Ops execution gate to be configured and open.
+
+State/Ops now persists normal orders, algo/conditional orders and account positions. On startup/reconnect the bot attaches the authenticated user-data stream, buffers events, reconciles normal orders + open algo orders + positions against Binance REST, drains buffered events, and only then enables new entries. Unknown/contradictory state, margin-call events, foreign order activity or unsupported hedge-mode state fail closed.
 
 Run tests:
 
