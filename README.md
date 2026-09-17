@@ -7,10 +7,10 @@ SignalGrid is a deliberately small, event-driven Binance USDⓈ-M Futures engine
 1. Market Data Hub — market events/state only
 2. Signal Hub — VOL + STRUCTURE + FLOW -> LONG/SHORT/PASS
 3. Risk Hub — permission, size and exposure caps
-4. Execution Hub — order lifecycle only
-5. State/Ops Hub — persistent positions/orders and restart recovery
+4. Execution Hub — bounded directional grid lifecycle only
+5. State/Ops Hub — persistent positions/orders, restart recovery and health checks
 
-No AI, ML, TradingView dependency, Hummingbot runtime, Freqtrade runtime, Nautilus, Rust or multi-exchange support in V1.
+No AI, ML, TradingView runtime dependency, Hummingbot runtime, Freqtrade runtime, Nautilus, Rust or multi-exchange support in V1.
 
 ## Signal core
 
@@ -20,15 +20,50 @@ No AI, ML, TradingView dependency, Hummingbot runtime, Freqtrade runtime, Nautil
 - Hygiene: signal expiry/debounce
 - Liquidity: spread gate
 
-## Current milestone
+## Bounded grid execution
 
-`M5`: live market transport + multi-symbol scanner + authenticated execution + fail-closed recovery + offline no-lookahead backtest/walk-forward harness.
+A valid signal maps to one finite campaign per symbol:
 
-Execution uses deterministic client IDs, exchange symbol filters/rounding and Binance Algo Order conditional stops (`/fapi/v1/algoOrder`). New entries are safe-by-default: they require the State/Ops execution gate to be configured and open.
+- 40% starter MARKET entry
+- three finite pullback LIMIT entries by default
+- NATR-derived spacing, bounded to safe configured limits
+- one global STOP_MARKET
+- one global TAKE_PROFIT_MARKET
+- deterministic client IDs and campaign ownership
+- no martingale, no automatic refill, no infinite grid
 
-State/Ops persists normal orders, algo/conditional orders and account positions. On startup/reconnect the bot attaches the authenticated user-data stream, buffers events, reconciles normal orders + open algo orders + positions against Binance REST, drains buffered events, and only then enables new entries. Unknown/contradictory state, margin-call events, foreign order activity or unsupported hedge-mode state fail closed.
+Restart/reconnect reconciliation is fail-closed. An active position without its owned STOP or TP is not allowed to continue silently.
 
-## M5 offline validation
+## Runtime modes
+
+### PAPER
+
+Uses Binance production public market data with local bounded-grid execution simulation. No exchange orders are sent.
+
+```bash
+python -m signalgrid.runtime --mode paper --symbols BTCUSDT,ETHUSDT,SOLUSDT --db signalgrid.db
+```
+
+### TESTNET
+
+Uses Binance USD-M Futures testnet REST/WebSocket endpoints and authenticated account/user-data reconciliation.
+
+Required environment variables:
+
+```text
+BINANCE_TESTNET_API_KEY
+BINANCE_TESTNET_API_SECRET
+```
+
+Run:
+
+```bash
+python -m signalgrid.runtime --mode testnet --symbols BTCUSDT,ETHUSDT,SOLUSDT --db signalgrid.db
+```
+
+TESTNET execution is blocked until account reconciliation and campaign recovery complete successfully. Every reconnect repeats recovery before the entry gate reopens.
+
+## Offline validation
 
 The backtest reuses the production `SignalEngine`; it does not contain a second strategy implementation.
 
@@ -36,12 +71,10 @@ Rules:
 
 - signal is evaluated only after a bar closes
 - entry can occur only at the next bar open
-- invalidation stop is checked after entry
 - configurable taker fees, assumed spread and slippage are charged
-- optional Binance `fundingRate` events are applied while a position is open
-- full-core runs require real historical `bookTicker` snapshots; missing book data fails closed rather than being synthesized
-- walk-forward selects a parameter candidate on the train window and reports only the following OOS window
-- parameter-neighborhood stability is reported alongside raw performance
+- optional Binance funding events are applied while a position is open
+- real historical `bookTicker` is required for full-core runs; missing book data fails closed
+- walk-forward selects on train data and reports only following OOS windows
 
 Example:
 
@@ -54,11 +87,40 @@ python -m signalgrid.backtest.cli \
   --mode walk-forward
 ```
 
-The command prints JSON containing OOS metrics and stability information.
+## Health and soak validation
 
-M5 is intentionally a bar-close research baseline. It is not a tick-level latency simulator; live microstructure/execution behavior is validated in M6 paper/testnet.
+One health snapshot:
 
-Run tests:
+```bash
+python -m signalgrid.ops.health --db signalgrid.db --pretty
+```
+
+Health fails when it detects conditions such as:
+
+- halted runtime
+- orphan account position
+- unowned active order/algo order
+- active position missing its campaign STOP
+- active position missing its campaign TAKE_PROFIT
+- TESTNET execution/user stream not ready
+
+Append a soak sample:
+
+```bash
+python -m signalgrid.ops.soak sample --db signalgrid.db --journal soak.jsonl
+```
+
+Evaluate a 24-hour soak:
+
+```bash
+python -m signalgrid.ops.soak report --journal soak.jsonl --required-hours 24 --pretty
+```
+
+A soak does not pass unless the requested duration is observed with zero unhealthy samples, zero halts, zero protection gaps, zero orphan-state samples and zero campaign-open failures.
+
+No live-capital mode is enabled by M6. PAPER must be clean before TESTNET validation, and TESTNET must be clean before any later live-capital work is considered.
+
+## Tests
 
 ```bash
 python -m pytest -q
