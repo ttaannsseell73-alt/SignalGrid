@@ -54,8 +54,8 @@ namespace SignalGrid {
 }
 "@
 }
-$ES_CONTINUOUS = [uint32]0x80000000
-$ES_SYSTEM_REQUIRED = [uint32]0x00000001
+$ES_CONTINUOUS = [uint32]2147483648
+$ES_SYSTEM_REQUIRED = [uint32]1
 [void][SignalGrid.Power]::SetThreadExecutionState($ES_CONTINUOUS -bor $ES_SYSTEM_REQUIRED)
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
