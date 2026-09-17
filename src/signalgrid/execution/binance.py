@@ -60,6 +60,23 @@ class OrderIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class LimitEntryIntent:
+    symbol: str
+    direction: Direction
+    notional_usdt: float
+    price: float
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReduceOnlyMarketIntent:
+    symbol: str
+    direction: Direction
+    quantity: Decimal | float | str
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionReceipt:
     symbol: str
     client_order_id: str
@@ -75,6 +92,7 @@ class ProtectiveExitIntent:
     trigger_price: float
     idempotency_key: str
     close_position: bool = True
+    order_type: str = "STOP_MARKET"
 
 
 def _d(value: Any) -> Decimal:
@@ -143,7 +161,19 @@ class BinanceExecutionPort:
     async def place_entry(self, intent: OrderIntent) -> str:
         raise NotImplementedError
 
+    async def place_limit_entry_receipt(self, intent: LimitEntryIntent) -> ExecutionReceipt:
+        raise NotImplementedError
+
+    async def place_protective_exit(self, intent: ProtectiveExitIntent) -> str:
+        raise NotImplementedError
+
+    async def place_reduce_only_market(self, intent: ReduceOnlyMarketIntent) -> str:
+        raise NotImplementedError
+
     async def cancel_order(self, symbol: str, order_id: str) -> None:
+        raise NotImplementedError
+
+    async def cancel_algo_order(self, client_algo_id: str) -> None:
         raise NotImplementedError
 
 
@@ -169,6 +199,15 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
             self._rules[symbol] = parse_symbol_rules(self.exchange_info_provider(), symbol)
         return self._rules[symbol]
 
+    def _quantity_for_notional(self, symbol: str, notional_usdt: float, price: Decimal) -> Decimal:
+        rules = self._rules_for(symbol)
+        quantity = round_down(_d(notional_usdt) / price, rules.step_size)
+        if quantity < rules.min_qty:
+            raise InvalidIntentError("quantity below minQty after rounding")
+        if rules.min_notional and quantity * price < rules.min_notional:
+            raise InvalidIntentError("notional below MIN_NOTIONAL after rounding")
+        return quantity
+
     async def place_entry(self, intent: OrderIntent) -> str:
         return (await self.place_entry_receipt(intent)).client_order_id
 
@@ -176,16 +215,12 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
         self._validate(intent)
         self._ensure_entry_ready()
         symbol = intent.symbol.upper()
-        rules = self._rules_for(symbol)
         reference_price = _d(
             intent.reference_price if intent.reference_price is not None else self.price_provider(symbol)
         )
-        quantity = round_down(_d(intent.notional_usdt) / reference_price, rules.step_size)
-        if quantity < rules.min_qty:
-            raise InvalidIntentError("quantity below minQty after rounding")
-        if rules.min_notional and quantity * reference_price < rules.min_notional:
-            raise InvalidIntentError("notional below MIN_NOTIONAL after rounding")
-
+        if reference_price <= 0:
+            raise InvalidIntentError("reference price must be positive")
+        quantity = self._quantity_for_notional(symbol, intent.notional_usdt, reference_price)
         cid = client_order_id("e", intent.idempotency_key)
         side = "BUY" if intent.direction is Direction.LONG else "SELL"
         try:
@@ -199,14 +234,47 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
             )
         except Exception as exc:
             raise map_binance_error(exc) from exc
-
         data = _model_dict(_unwrap(response))
         exchange_order_id = str(data.get("orderId") or data.get("order_id") or "")
         return ExecutionReceipt(symbol, cid, exchange_order_id, quantity, reference_price)
 
+    async def place_limit_entry_receipt(self, intent: LimitEntryIntent) -> ExecutionReceipt:
+        if intent.direction not in (Direction.LONG, Direction.SHORT):
+            raise InvalidIntentError("limit entry direction must be LONG or SHORT")
+        if intent.notional_usdt <= 0 or intent.price <= 0 or not intent.idempotency_key:
+            raise InvalidIntentError("invalid limit entry intent")
+        self._ensure_entry_ready()
+        symbol = intent.symbol.upper()
+        rules = self._rules_for(symbol)
+        price = round_down(_d(intent.price), rules.tick_size)
+        if price <= 0:
+            raise InvalidIntentError("limit price invalid after rounding")
+        quantity = self._quantity_for_notional(symbol, intent.notional_usdt, price)
+        cid = client_order_id("g", intent.idempotency_key)
+        side = "BUY" if intent.direction is Direction.LONG else "SELL"
+        try:
+            response = self.rest_api.new_order(
+                symbol=symbol,
+                side=side,
+                type="LIMIT",
+                time_in_force="GTC",
+                quantity=float(quantity),
+                price=float(price),
+                new_client_order_id=cid,
+                new_order_resp_type="RESULT",
+            )
+        except Exception as exc:
+            raise map_binance_error(exc) from exc
+        data = _model_dict(_unwrap(response))
+        exchange_order_id = str(data.get("orderId") or data.get("order_id") or "")
+        return ExecutionReceipt(symbol, cid, exchange_order_id, quantity, price)
+
     async def place_protective_exit(self, intent: ProtectiveExitIntent) -> str:
         if intent.direction is Direction.PASS or intent.trigger_price <= 0:
             raise InvalidIntentError("invalid protective exit")
+        order_type = intent.order_type.upper()
+        if order_type not in {"STOP_MARKET", "TAKE_PROFIT_MARKET"}:
+            raise InvalidIntentError("protective order_type must be STOP_MARKET or TAKE_PROFIT_MARKET")
         symbol = intent.symbol.upper()
         rules = self._rules_for(symbol)
         trigger = round_down(_d(intent.trigger_price), rules.tick_size)
@@ -217,7 +285,7 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
                 algo_type="CONDITIONAL",
                 symbol=symbol,
                 side=side,
-                type="STOP_MARKET",
+                type=order_type,
                 trigger_price=float(trigger),
                 close_position="true" if intent.close_position else "false",
                 client_algo_id=cid,
@@ -225,13 +293,46 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
             )
         except Exception as exc:
             raise map_binance_error(exc) from exc
-
         data = _model_dict(_unwrap(response))
         return str(data.get("clientAlgoId") or data.get("client_algo_id") or cid)
+
+    async def place_reduce_only_market(self, intent: ReduceOnlyMarketIntent) -> str:
+        if intent.direction not in (Direction.LONG, Direction.SHORT):
+            raise InvalidIntentError("reduce-only direction must be LONG or SHORT")
+        if not intent.idempotency_key:
+            raise InvalidIntentError("idempotency_key is required")
+        symbol = intent.symbol.upper()
+        rules = self._rules_for(symbol)
+        quantity = round_down(_d(intent.quantity), rules.step_size)
+        if quantity < rules.min_qty:
+            raise InvalidIntentError("reduce-only quantity below minQty")
+        cid = client_order_id("r", intent.idempotency_key)
+        side = "SELL" if intent.direction is Direction.LONG else "BUY"
+        try:
+            self.rest_api.new_order(
+                symbol=symbol,
+                side=side,
+                type="MARKET",
+                quantity=float(quantity),
+                reduce_only="true",
+                new_client_order_id=cid,
+                new_order_resp_type="RESULT",
+            )
+        except Exception as exc:
+            raise map_binance_error(exc) from exc
+        return cid
 
     async def cancel_order(self, symbol: str, order_id: str) -> None:
         try:
             self.rest_api.cancel_order(symbol=symbol.upper(), order_id=int(order_id))
+        except Exception as exc:
+            raise map_binance_error(exc) from exc
+
+    async def cancel_algo_order(self, client_algo_id: str) -> None:
+        if not client_algo_id:
+            raise InvalidIntentError("client_algo_id is required")
+        try:
+            self.rest_api.cancel_algo_order(client_algo_id=client_algo_id)
         except Exception as exc:
             raise map_binance_error(exc) from exc
 
