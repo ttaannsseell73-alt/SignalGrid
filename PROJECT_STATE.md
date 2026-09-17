@@ -41,6 +41,7 @@ Locked constraints:
 - Soak coverage: maximum sample-gap validation prevents sparse journals from faking a continuous 24h/72h run.
 - One-command soak runner: runtime startup + LIVE wait + health sampling + fail-fast + final report in one process.
 - PAPER safety: same-market-event close/re-entry suppression prevents an event from closing and immediately reopening the same campaign.
+- Binance Futures Demo reflex path: secure local Demo credentials, Demo REST/stream endpoints, One-way Mode preflight, 3x leverage pinning, reduced Demo-only risk profile and PASS/LONG/SHORT transition telemetry.
 
 ## Canonical main checkpoints
 - M5 backtest/walk-forward: `0fe39210b736c788e9149af12faf3b5ecfc19366`
@@ -49,6 +50,7 @@ Locked constraints:
 - M6 PAPER/TESTNET runtime + reconnect-safe recovery: `c43c9638beecfc1beeb33c0b2f996201de7501e4`
 - M6 soak telemetry + PAPER re-entry hardening: `a25d80bf1be5d34b5e4d82b710f99fdd03e4973d`
 - M6 one-command soak runner + coverage hardening: `58e3669e1c2585bf4a390a74b9d855fd4c20539b`
+- M6 Binance Futures Demo reflex runner: `765cf313e3575d5af1474338a58c9f11e192c62a`
 
 ## Milestones
 - [x] M0 project skeleton
@@ -61,19 +63,24 @@ Locked constraints:
 - [x] M6 PAPER/TESTNET runtime wiring
 - [x] M6 soak telemetry merge
 - [x] M6 one-command soak runner merge
+- [x] M6 Binance Futures Demo reflex runner
+- [ ] M6 Binance Demo 1h reflex smoke/stress
 - [ ] M6 PAPER 24h soak
-- [ ] M6 TESTNET 24h soak
-- [ ] M6 TESTNET 72h soak
+- [ ] M6 TESTNET/DEMO 24h soak
+- [ ] M6 TESTNET/DEMO 72h soak
 
 ## Latest verification
-- PR #8 merged by squash.
-- PR #8 CI: Python 3.11 PASS, 3.12 PASS, 3.13 PASS.
-- Gap-regression test confirms two distant endpoint samples cannot fake continuous soak coverage.
-- One-command runner tests confirm healthy PAPER completion and fail-fast halt behavior.
+- PR #9 merged by squash as `765cf313e3575d5af1474338a58c9f11e192c62a`.
+- PR #9 CI: Python 3.11 PASS, 3.12 PASS, 3.13 PASS.
+- Demo runner never uses production credentials; launcher reads Demo secret locally and removes credential environment variables at exit.
+- Demo preflight rejects Hedge Mode and pins every stress-test symbol to 3x leverage before runtime starts.
+- Demo-only risk profile: max 6 positions, 1,200 USDT total notional, 100 USDT base notional, 200 USDT max per campaign, 3x leverage.
+- Reflex telemetry records direction transitions, LONG↔SHORT reversals, trade→PASS invalidations, PASS→trade activations and transition-response latency.
 - No live-capital path is enabled.
 
 ## Immediate next task
-1. Run real PAPER soak for 24 continuous hours using `python -m signalgrid.ops.run_soak`.
-2. PAPER passes only with continuous telemetry coverage and zero unhealthy samples, halts, orphan/protection incidents or campaign-open failures.
-3. After clean PAPER validation, run Binance TESTNET 24h and then TESTNET 72h with explicit testnet credentials.
-4. No live-capital mode until all M6 empirical soak gates are clean and reviewed.
+1. Create a Binance Futures Demo API key from the Demo Trading account API Management page; never paste its secret into chat.
+2. Pull canonical `main` and run `scripts/start_demo_reflex.ps1`.
+3. First empirical gate: 1-hour Demo reflex smoke/stress using BTC/ETH controls plus a liquid/high-volatility stress basket.
+4. Review visible Binance Demo positions/orders together with local reflex/runtime telemetry.
+5. Only after the 1-hour gate is clean, extend to 24h and then 72h empirical validation.
