@@ -13,7 +13,9 @@ from typing import Any, Iterable
 from signalgrid.engine import SignalGridEngine
 from signalgrid.models import Direction
 from signalgrid.ops.run_soak import run_soak_session
+from signalgrid.ops.signal_diagnostics import SignalDiagnosticCounter
 from signalgrid.risk.engine import RiskConfig, RiskEngine
+from signalgrid.signals.engine import SignalConfig, SignalEngine
 from signalgrid.runtime import RuntimeConfig, RuntimeMode, SignalGridRuntime
 from signalgrid.scanner import MultiSymbolScanner, ScanResult
 
@@ -44,6 +46,19 @@ DEMO_RISK = RiskConfig(
     leverage=3,
 )
 
+# Deliberately more reactive than the production profile. This profile exists
+# only to exercise signal -> risk -> Binance Demo execution/reflex behavior.
+DEMO_SIGNAL_CONFIG = SignalConfig(
+    structure_lookback=5,
+    max_spread_bps=10.0,
+    min_expansion=0.90,
+    strong_expansion=1.20,
+    min_flow_abs=0.05,
+    min_book_abs=0.03,
+    entry_threshold=0.52,
+    ttl_seconds=20.0,
+)
+
 
 @dataclass(slots=True)
 class ReflexStats:
@@ -53,11 +68,34 @@ class ReflexStats:
     short_to_long_reversals: int = 0
     trade_to_pass_invalidations: int = 0
     pass_to_trade_activations: int = 0
+    evaluations_seen: int = 0
+    long_signals_seen: int = 0
+    short_signals_seen: int = 0
+    pass_signals_seen: int = 0
+    emitted_long: int = 0
+    emitted_short: int = 0
+    diagnostics: SignalDiagnosticCounter = field(default_factory=SignalDiagnosticCounter)
     _transition_latency_ms: deque[float] = field(default_factory=lambda: deque(maxlen=2_000))
 
     def observe(self, result: ScanResult) -> None:
         symbol = result.symbol.upper()
         current = result.signal.direction
+        self.evaluations_seen += 1
+        if current is Direction.PASS:
+            self.pass_signals_seen += 1
+            self.diagnostics.observe(getattr(result.signal, "setup", "PASS"))
+        elif current is Direction.LONG:
+            self.long_signals_seen += 1
+            if result.emitted:
+                self.emitted_long += 1
+            elif not result.decision.approved:
+                self.diagnostics.observe(result.decision.reason)
+        elif current is Direction.SHORT:
+            self.short_signals_seen += 1
+            if result.emitted:
+                self.emitted_short += 1
+            elif not result.decision.approved:
+                self.diagnostics.observe(result.decision.reason)
         previous = self.last_direction.get(symbol)
         if previous is not None and previous is not current:
             self.direction_transitions += 1
@@ -74,7 +112,7 @@ class ReflexStats:
                 self.pass_to_trade_activations += 1
         self.last_direction[symbol] = current
 
-    def snapshot(self) -> dict[str, float | int | None]:
+    def snapshot(self) -> dict[str, Any]:
         values = sorted(self._transition_latency_ms)
         p95 = values[min(len(values) - 1, int(len(values) * 0.95))] if values else None
         return {
@@ -83,6 +121,13 @@ class ReflexStats:
             "short_to_long_reversals": self.short_to_long_reversals,
             "trade_to_pass_invalidations": self.trade_to_pass_invalidations,
             "pass_to_trade_activations": self.pass_to_trade_activations,
+            "evaluations_seen": self.evaluations_seen,
+            "long_signals_seen": self.long_signals_seen,
+            "short_signals_seen": self.short_signals_seen,
+            "pass_signals_seen": self.pass_signals_seen,
+            "emitted_long": self.emitted_long,
+            "emitted_short": self.emitted_short,
+            "rejection_reasons": self.diagnostics.snapshot(),
             "transition_response_median_ms": median(values) if values else None,
             "transition_response_p95_ms": p95,
         }
@@ -169,7 +214,10 @@ def build_demo_runtime(symbols: tuple[str, ...], db_path: str) -> tuple[SignalGr
     reflex = ReflexStats()
     runtime.scanner = ReflexScanner(
         runtime.router,
-        SignalGridEngine(risk_engine=RiskEngine(DEMO_RISK)),
+        SignalGridEngine(
+            signal_engine=SignalEngine(DEMO_SIGNAL_CONFIG),
+            risk_engine=RiskEngine(DEMO_RISK),
+        ),
         base.config,
         positions_provider=base.positions_provider,
         now_ms=base.now_ms,
@@ -178,7 +226,60 @@ def build_demo_runtime(symbols: tuple[str, ...], db_path: str) -> tuple[SignalGr
     runtime.store.set_runtime("environment_label", "BINANCE_FUTURES_DEMO")
     runtime.store.set_runtime("demo_rest_url", DEMO_REST_URL)
     runtime.store.set_runtime("demo_ws_stream_url", DEMO_WS_STREAM_URL)
+    runtime.store.set_runtime(
+        "demo_signal_profile",
+        json.dumps({
+            "structure_lookback": DEMO_SIGNAL_CONFIG.structure_lookback,
+            "max_spread_bps": DEMO_SIGNAL_CONFIG.max_spread_bps,
+            "min_expansion": DEMO_SIGNAL_CONFIG.min_expansion,
+            "strong_expansion": DEMO_SIGNAL_CONFIG.strong_expansion,
+            "min_flow_abs": DEMO_SIGNAL_CONFIG.min_flow_abs,
+            "min_book_abs": DEMO_SIGNAL_CONFIG.min_book_abs,
+            "entry_threshold": DEMO_SIGNAL_CONFIG.entry_threshold,
+        }, sort_keys=True),
+    )
     return runtime, reflex
+
+
+async def _run_demo_with_progress(
+    runtime: SignalGridRuntime,
+    reflex: ReflexStats,
+    *,
+    journal: Path,
+    required_seconds: float,
+    sample_interval_seconds: float,
+):
+    task = asyncio.create_task(
+        run_soak_session(
+            runtime,
+            journal=journal,
+            required_seconds=required_seconds,
+            sample_interval_seconds=sample_interval_seconds,
+            startup_timeout_seconds=120.0,
+        ),
+        name="signalgrid-demo-soak",
+    )
+    try:
+        while not task.done():
+            await asyncio.sleep(min(10.0, sample_interval_seconds))
+            if task.done():
+                break
+            print(
+                json.dumps(
+                    {
+                        "demo_progress": True,
+                        "runtime": runtime.stats.snapshot(),
+                        "reflex": reflex.snapshot(),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        return await task
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
@@ -207,17 +308,26 @@ def main(argv: Iterable[str] | None = None) -> int:
     runtime, reflex = build_demo_runtime(symbols, args.db)
     try:
         report = asyncio.run(
-            run_soak_session(
+            _run_demo_with_progress(
                 runtime,
+                reflex,
                 journal=journal,
                 required_seconds=args.hours * 3600.0,
                 sample_interval_seconds=args.sample_seconds,
-                startup_timeout_seconds=120.0,
             )
         )
         payload = {
             "environment": "BINANCE_FUTURES_DEMO",
             "symbols": list(symbols),
+            "signal_profile": {
+                "structure_lookback": DEMO_SIGNAL_CONFIG.structure_lookback,
+                "max_spread_bps": DEMO_SIGNAL_CONFIG.max_spread_bps,
+                "min_expansion": DEMO_SIGNAL_CONFIG.min_expansion,
+                "strong_expansion": DEMO_SIGNAL_CONFIG.strong_expansion,
+                "min_flow_abs": DEMO_SIGNAL_CONFIG.min_flow_abs,
+                "min_book_abs": DEMO_SIGNAL_CONFIG.min_book_abs,
+                "entry_threshold": DEMO_SIGNAL_CONFIG.entry_threshold,
+            },
             "risk": {
                 "max_positions": DEMO_RISK.max_positions,
                 "max_total_notional_usdt": DEMO_RISK.max_total_notional_usdt,
