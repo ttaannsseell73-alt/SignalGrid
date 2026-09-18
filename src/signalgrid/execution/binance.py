@@ -24,6 +24,10 @@ class BinanceRejectedError(ExecutionError):
     code = "BINANCE_REJECTED"
 
 
+class BinanceOrderNotFoundError(BinanceRejectedError):
+    code = "BINANCE_ORDER_NOT_FOUND"
+
+
 class BinanceRateLimitError(ExecutionError):
     code = "BINANCE_RATE_LIMIT"
 
@@ -357,6 +361,8 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
 def map_binance_error(exc: Exception) -> ExecutionError:
     name = type(exc).__name__.lower()
     text = str(exc)
+    if "-2011" in text or "unknown order sent" in text.lower():
+        return BinanceOrderNotFoundError(text)
     if "toomanyrequests" in name or "ratelimit" in name or "429" in text:
         return BinanceRateLimitError(text)
     if "unauthorized" in name or "forbidden" in name or "401" in text or "403" in text:

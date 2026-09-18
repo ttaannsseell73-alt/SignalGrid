@@ -2,6 +2,7 @@ import asyncio
 from decimal import Decimal
 
 from signalgrid.execution.binance import (
+    BinanceOrderNotFoundError,
     BinanceRestExecutionAdapter,
     ExecutionBlockedError,
     InvalidIntentError,
@@ -10,6 +11,7 @@ from signalgrid.execution.binance import (
     ProtectiveExitIntent,
     ReduceOnlyMarketIntent,
     client_order_id,
+    map_binance_error,
 )
 from signalgrid.models import Direction
 
@@ -123,3 +125,8 @@ def test_entry_is_safe_by_default_without_execution_gate():
     else:
         raise AssertionError("missing execution gate must fail closed")
     assert not hasattr(rest, "order")
+
+
+def test_unknown_order_error_is_classified_for_idempotent_cleanup():
+    err = map_binance_error(RuntimeError("(-2011, 'Unknown order sent.')"))
+    assert isinstance(err, BinanceOrderNotFoundError)
