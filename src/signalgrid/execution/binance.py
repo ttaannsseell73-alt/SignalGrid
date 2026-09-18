@@ -16,6 +16,10 @@ class InvalidIntentError(ExecutionError):
     code = "INVALID_INTENT"
 
 
+class ProtectiveTriggerError(InvalidIntentError):
+    code = "PROTECTIVE_TRIGGER_INVALID"
+
+
 class SymbolRulesError(ExecutionError):
     code = "SYMBOL_RULES"
 
@@ -168,6 +172,9 @@ class BinanceExecutionPort:
     async def place_limit_entry_receipt(self, intent: LimitEntryIntent) -> ExecutionReceipt:
         raise NotImplementedError
 
+    def validate_protective_exit(self, intent: ProtectiveExitIntent) -> None:
+        raise NotImplementedError
+
     async def place_protective_exit(self, intent: ProtectiveExitIntent) -> str:
         raise NotImplementedError
 
@@ -190,11 +197,15 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
         price_provider: Callable[[str], float],
         exchange_info_provider: Callable[[], Any] | None = None,
         execution_gate: Callable[[], bool] | None = None,
+        protective_trigger_guard_bps: float = 2.0,
     ) -> None:
         self.rest_api = rest_api
         self.price_provider = price_provider
         self.exchange_info_provider = exchange_info_provider or rest_api.exchange_information
         self.execution_gate = execution_gate
+        if protective_trigger_guard_bps < 0:
+            raise ValueError("protective_trigger_guard_bps must be >= 0")
+        self.protective_trigger_guard_bps = float(protective_trigger_guard_bps)
         self._rules: dict[str, SymbolRules] = {}
 
     def _rules_for(self, symbol: str) -> SymbolRules:
@@ -273,12 +284,35 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
         exchange_order_id = str(data.get("orderId") or data.get("order_id") or "")
         return ExecutionReceipt(symbol, cid, exchange_order_id, quantity, price)
 
-    async def place_protective_exit(self, intent: ProtectiveExitIntent) -> str:
+    def validate_protective_exit(self, intent: ProtectiveExitIntent) -> None:
         if intent.direction is Direction.PASS or intent.trigger_price <= 0:
             raise InvalidIntentError("invalid protective exit")
         order_type = intent.order_type.upper()
         if order_type not in {"STOP_MARKET", "TAKE_PROFIT_MARKET"}:
             raise InvalidIntentError("protective order_type must be STOP_MARKET or TAKE_PROFIT_MARKET")
+        symbol = intent.symbol.upper()
+        rules = self._rules_for(symbol)
+        trigger = round_down(_d(intent.trigger_price), rules.tick_size)
+        reference = _d(self.price_provider(symbol))
+        if reference <= 0:
+            raise ProtectiveTriggerError("protective trigger reference price must be positive")
+        guard = _d(self.protective_trigger_guard_bps) / _d(10_000)
+        lower = reference * (_d(1) - guard)
+        upper = reference * (_d(1) + guard)
+
+        if order_type == "STOP_MARKET":
+            valid = trigger < lower if intent.direction is Direction.LONG else trigger > upper
+        else:
+            valid = trigger > upper if intent.direction is Direction.LONG else trigger < lower
+        if not valid:
+            raise ProtectiveTriggerError(
+                f"{order_type} trigger {trigger} is not safely beyond current contract price "
+                f"{reference} for {intent.direction.value} (guard_bps={self.protective_trigger_guard_bps})"
+            )
+
+    async def place_protective_exit(self, intent: ProtectiveExitIntent) -> str:
+        self.validate_protective_exit(intent)
+        order_type = intent.order_type.upper()
         symbol = intent.symbol.upper()
         rules = self._rules_for(symbol)
         trigger = round_down(_d(intent.trigger_price), rules.tick_size)
@@ -293,7 +327,7 @@ class BinanceRestExecutionAdapter(BinanceExecutionPort):
                 trigger_price=float(trigger),
                 close_position="true" if intent.close_position else "false",
                 client_algo_id=cid,
-                working_type="MARK_PRICE",
+                working_type="CONTRACT_PRICE",
             )
         except Exception as exc:
             raise map_binance_error(exc) from exc
