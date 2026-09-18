@@ -52,6 +52,7 @@ Locked constraints:
 - M6 one-command soak runner + coverage hardening: `58e3669e1c2585bf4a390a74b9d855fd4c20539b`
 - M6 Binance Futures Demo reflex runner: `765cf313e3575d5af1474338a58c9f11e192c62a`
 - M6 Demo signal-active reflex profile + diagnostics: `68cecc367291441cd4861f4ec661a5fce7f3090a`
+- M6 cleanup idempotency hardening for Binance -2011 races: `32725fa41479374b96ead84900ca3ddb57622988`
 
 ## Milestones
 - [x] M0 project skeleton
@@ -81,12 +82,15 @@ Locked constraints:
 - PR #10 merged by squash as `68cecc367291441cd4861f4ec661a5fce7f3090a`; CI PASS on Python 3.11/3.12/3.13.
 - Demo reflex now uses a Demo-only reactive signal profile: structure lookback 5, max spread 10 bps, min expansion 0.90, strong expansion 1.20, min flow abs 0.05, min book abs 0.03, entry threshold 0.52. Production SignalConfig defaults are unchanged.
 - Demo telemetry now exposes PASS rejection reasons, LONG/SHORT signals seen, emitted LONG/SHORT counts, and 10-second console progress.
+- Authenticated Demo rerun on 2026-09-18 proved directional signal/execution path: 1 emitted LONG, 1 campaign opened, 0 open failures; rejection distribution at failure point included NO_STRUCTURE 48, NO_VOL_EXPANSION 29, LIQUIDITY_GATE 15, SYMBOL_ALREADY_ACTIVE 15.
+- The same run exposed a cleanup race: Binance returned -2011 `Unknown order sent` when a flat-campaign sibling algo order had already disappeared from the exchange. This incorrectly halted the soak.
+- PR #11 merged as `32725fa41479374b96ead84900ca3ddb57622988`; CI PASS on Python 3.11/3.12/3.13. Flat cleanup now treats only Binance order-not-found (-2011) as pending exchange/user-stream convergence; other cleanup failures remain fail-closed.
 - Locked follow-up after directional signal/execution proof: add `NEUTRAL_GRID` as a distinct regime outcome; `PASS` remains no-trade. Dynamic leverage remains a later required Risk Hub feature.
 - No live-capital path is enabled.
 
 ## Immediate next task
-1. Pull canonical `main` and rerun `scripts/start_demo_reflex.ps1` with the existing Binance Futures Demo credentials.
-2. Within the first few minutes, inspect 10-second console telemetry for `rejection_reasons`, `long_signals_seen`, `short_signals_seen`, `emitted_long`, `emitted_short`, `signals_emitted`, and `campaigns_opened`.
-3. First gate: prove at least one valid directional signal reaches Binance Demo and opens a protected grid campaign; if not, use the rejection histogram to tune only the Demo reflex profile.
-4. After directional signal/execution proof, implement the locked four-outcome regime model: `NEUTRAL_GRID / LONG_GRID / SHORT_GRID / PASS`.
+1. Pull canonical `main` containing cleanup hardening and rerun `scripts/start_demo_reflex.ps1` with the existing Binance Futures Demo credentials.
+2. Verify the prior -2011 cleanup race no longer halts the run and that at least one complete open→protected→flat→cleanup lifecycle finishes healthy.
+3. Inspect `signals_emitted`, `campaigns_opened`, `campaigns_closed`, `cleanups`, `open_failures`, `halted_samples`, and rejection telemetry during the rerun.
+4. After one clean directional lifecycle, implement the locked four-outcome regime model: `NEUTRAL_GRID / LONG_GRID / SHORT_GRID / PASS`.
 5. Then add the Dynamic Leverage Controller in Risk Hub and proceed to 1h, 24h and 72h Demo validation.
