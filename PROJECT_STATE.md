@@ -55,6 +55,7 @@ Locked constraints:
 - M6 cleanup idempotency hardening for Binance -2011 races: `32725fa41479374b96ead84900ca3ddb57622988`
 - M6 pre-exposure starter failure hardening + root-cause telemetry: `e80243ba78f209080596c381b04dcaa1dfe2a2eb`
 - M6 protective trigger basis/geometry hardening: `6770b55b7f7a854467e433e79862f1a82968a687`
+- M6 Demo stale-owned-order preflight cleanup: `e2253c06aef76d79e90984ca39cdeb686452af8e`
 
 ## Milestones
 - [x] M0 project skeleton
@@ -91,12 +92,14 @@ Locked constraints:
 - PR #12 merged as `e80243ba78f209080596c381b04dcaa1dfe2a2eb`; CI PASS on Python 3.11/3.12/3.13. Starter failures before any exposure now mark the campaign FAILED without account HALT; once exposure exists, stop/protection failures remain fail-closed. Runtime now persists `last_open_error` with phase, symbol, campaign, exception and root cause; Demo progress surfaces it directly.
 - Authenticated Demo then opened 4 campaigns successfully before APTUSDT failed at protective STOP placement with Binance `-2021 Order would immediately trigger`; emergency close succeeded and fail-closed account HALT behaved as designed. Root cause: signal invalidation comes from regular futures kline/contract-price structure, while protective orders were configured with `MARK_PRICE` trigger basis.
 - PR #13 merged as `6770b55b7f7a854467e433e79862f1a82968a687`; CI PASS on Python 3.11/3.12/3.13. Protective STOP/TP now use `CONTRACT_PRICE`, matching the signal/invalidation basis. A 2 bps trigger-geometry guard validates STOP and TP against current contract price before starter exposure, then validates again at protective submit time. Invalid geometry fails before exposure without account HALT; any post-exposure protection failure remains fail-closed with emergency close.
+- Fresh Demo rerun then failed at startup reconciliation because 8 stale SignalGrid LIMIT orders (`sg-g-*`) from prior runs remained on Binance Demo while the new run used a fresh SQLite DB. This is expected fail-closed behavior, but required manual cleanup.
+- PR #14 merged as `e2253c06aef76d79e90984ca39cdeb686452af8e`; CI PASS on Python 3.11/3.12/3.13. Demo preflight now refuses any open position, refuses foreign/non-SignalGrid open orders, automatically cancels only stale `sg-*` regular/algo orders, verifies the account is empty, then pins leverage and starts reconciliation. This removes manual stale-order cleanup between fresh Demo runs without weakening ownership safety.
 - Locked follow-up after directional signal/execution proof: add `NEUTRAL_GRID` as a distinct regime outcome; `PASS` remains no-trade. Dynamic leverage remains a later required Risk Hub feature.
 - No live-capital path is enabled.
 
 ## Immediate next task
-1. Pull canonical `main` containing protective-trigger hardening and rerun `scripts/start_demo_reflex.ps1` with the existing Binance Futures Demo credentials.
-2. Verify no repeat of Binance `-2021` from basis mismatch; if a trigger becomes invalid before exposure it should appear as a non-halting `ProtectiveTriggerError` in `last_open_error`.
-3. Verify at least one complete open→protected→flat→cleanup lifecycle finishes healthy and the prior -2011 cleanup race does not recur.
+1. Pull canonical `main` containing Demo preflight cleanup and rerun `scripts/start_demo_reflex.ps1` with the existing Binance Futures Demo credentials.
+2. Preflight should automatically remove stale `sg-*` orders if there are no open positions and no foreign orders; otherwise it must stop safely.
+3. Verify no repeat of Binance `-2021` from basis mismatch and at least one complete open→protected→flat→cleanup lifecycle finishes healthy.
 4. After one clean directional lifecycle, implement the locked four-outcome regime model: `NEUTRAL_GRID / LONG_GRID / SHORT_GRID / PASS`.
 5. Then add the Dynamic Leverage Controller in Risk Hub and proceed to 1h, 24h and 72h Demo validation.
