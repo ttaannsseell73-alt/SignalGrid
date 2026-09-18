@@ -9,6 +9,7 @@ from signalgrid.execution.binance import (
     LimitEntryIntent,
     OrderIntent,
     ProtectiveExitIntent,
+    ProtectiveTriggerError,
     ReduceOnlyMarketIntent,
     client_order_id,
     map_binance_error,
@@ -63,6 +64,7 @@ def test_protective_stop_uses_algo_order_and_tick_rounding():
     assert rest.algo["type"] == "STOP_MARKET"
     assert rest.algo["trigger_price"] == 140.03
     assert rest.algo["side"] == "SELL"
+    assert rest.algo["working_type"] == "CONTRACT_PRICE"
 
 def test_take_profit_uses_algo_close_position_order():
     rest = FakeRest(); adapter = BinanceRestExecutionAdapter(rest, lambda symbol: 143.27, execution_gate=lambda: True)
@@ -130,3 +132,56 @@ def test_entry_is_safe_by_default_without_execution_gate():
 def test_unknown_order_error_is_classified_for_idempotent_cleanup():
     err = map_binance_error(RuntimeError("(-2011, 'Unknown order sent.')"))
     assert isinstance(err, BinanceOrderNotFoundError)
+
+
+def test_protective_stop_precheck_rejects_immediate_long_trigger_before_exchange_call():
+    rest = FakeRest()
+    adapter = BinanceRestExecutionAdapter(
+        rest,
+        lambda symbol: 100.0,
+        execution_gate=lambda: True,
+        protective_trigger_guard_bps=2.0,
+    )
+    intent = ProtectiveExitIntent("SOLUSDT", Direction.LONG, 99.99, "too-close-stop")
+    try:
+        adapter.validate_protective_exit(intent)
+    except ProtectiveTriggerError:
+        pass
+    else:
+        raise AssertionError("LONG stop inside guard must be rejected")
+    assert rest.algos == []
+
+
+def test_protective_stop_precheck_accepts_short_trigger_above_contract_price():
+    rest = FakeRest()
+    adapter = BinanceRestExecutionAdapter(
+        rest,
+        lambda symbol: 100.0,
+        execution_gate=lambda: True,
+        protective_trigger_guard_bps=2.0,
+    )
+    intent = ProtectiveExitIntent("SOLUSDT", Direction.SHORT, 101.0, "short-stop")
+    adapter.validate_protective_exit(intent)
+
+
+def test_take_profit_precheck_rejects_immediate_short_trigger():
+    rest = FakeRest()
+    adapter = BinanceRestExecutionAdapter(
+        rest,
+        lambda symbol: 100.0,
+        execution_gate=lambda: True,
+        protective_trigger_guard_bps=2.0,
+    )
+    intent = ProtectiveExitIntent(
+        "SOLUSDT",
+        Direction.SHORT,
+        99.99,
+        "short-tp-too-close",
+        order_type="TAKE_PROFIT_MARKET",
+    )
+    try:
+        adapter.validate_protective_exit(intent)
+    except ProtectiveTriggerError:
+        pass
+    else:
+        raise AssertionError("SHORT TP inside guard must be rejected")
