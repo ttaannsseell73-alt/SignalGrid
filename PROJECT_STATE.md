@@ -54,6 +54,7 @@ Locked constraints:
 - M6 Demo signal-active reflex profile + diagnostics: `68cecc367291441cd4861f4ec661a5fce7f3090a`
 - M6 cleanup idempotency hardening for Binance -2011 races: `32725fa41479374b96ead84900ca3ddb57622988`
 - M6 pre-exposure starter failure hardening + root-cause telemetry: `e80243ba78f209080596c381b04dcaa1dfe2a2eb`
+- M6 protective trigger basis/geometry hardening: `6770b55b7f7a854467e433e79862f1a82968a687`
 
 ## Milestones
 - [x] M0 project skeleton
@@ -88,12 +89,14 @@ Locked constraints:
 - PR #11 merged as `32725fa41479374b96ead84900ca3ddb57622988`; CI PASS on Python 3.11/3.12/3.13. Flat cleanup now treats only Binance order-not-found (-2011) as pending exchange/user-stream convergence; other cleanup failures remain fail-closed.
 - Next authenticated Demo run produced 44 LONG signals seen, 2 emitted LONG signals, 1 campaign opened, then `GRID_OPEN_DEGRADED:BTCUSDT`. Health at failure showed only one full campaign footprint (1 position, 3 active regular orders, 2 active algos) despite 2 active campaign records, strongly indicating the second BTC campaign failed at starter entry before exposure.
 - PR #12 merged as `e80243ba78f209080596c381b04dcaa1dfe2a2eb`; CI PASS on Python 3.11/3.12/3.13. Starter failures before any exposure now mark the campaign FAILED without account HALT; once exposure exists, stop/protection failures remain fail-closed. Runtime now persists `last_open_error` with phase, symbol, campaign, exception and root cause; Demo progress surfaces it directly.
+- Authenticated Demo then opened 4 campaigns successfully before APTUSDT failed at protective STOP placement with Binance `-2021 Order would immediately trigger`; emergency close succeeded and fail-closed account HALT behaved as designed. Root cause: signal invalidation comes from regular futures kline/contract-price structure, while protective orders were configured with `MARK_PRICE` trigger basis.
+- PR #13 merged as `6770b55b7f7a854467e433e79862f1a82968a687`; CI PASS on Python 3.11/3.12/3.13. Protective STOP/TP now use `CONTRACT_PRICE`, matching the signal/invalidation basis. A 2 bps trigger-geometry guard validates STOP and TP against current contract price before starter exposure, then validates again at protective submit time. Invalid geometry fails before exposure without account HALT; any post-exposure protection failure remains fail-closed with emergency close.
 - Locked follow-up after directional signal/execution proof: add `NEUTRAL_GRID` as a distinct regime outcome; `PASS` remains no-trade. Dynamic leverage remains a later required Risk Hub feature.
 - No live-capital path is enabled.
 
 ## Immediate next task
-1. Pull canonical `main` containing starter-failure hardening and rerun `scripts/start_demo_reflex.ps1` with the existing Binance Futures Demo credentials.
-2. Watch `last_open_error` directly in each Demo progress sample. If another starter rejection occurs, capture its exact Binance cause without halting the account.
+1. Pull canonical `main` containing protective-trigger hardening and rerun `scripts/start_demo_reflex.ps1` with the existing Binance Futures Demo credentials.
+2. Verify no repeat of Binance `-2021` from basis mismatch; if a trigger becomes invalid before exposure it should appear as a non-halting `ProtectiveTriggerError` in `last_open_error`.
 3. Verify at least one complete open→protected→flat→cleanup lifecycle finishes healthy and the prior -2011 cleanup race does not recur.
 4. After one clean directional lifecycle, implement the locked four-outcome regime model: `NEUTRAL_GRID / LONG_GRID / SHORT_GRID / PASS`.
 5. Then add the Dynamic Leverage Controller in Risk Hub and proceed to 1h, 24h and 72h Demo validation.
