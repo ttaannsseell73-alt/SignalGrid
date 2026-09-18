@@ -1,7 +1,7 @@
 import asyncio
 from decimal import Decimal
 
-from signalgrid.execution.binance import ExecutionReceipt, client_order_id
+from signalgrid.execution.binance import BinanceOrderNotFoundError, ExecutionReceipt, client_order_id
 from signalgrid.execution.campaign import GridCampaignError, GridCampaignExecutor, GridCampaignRegistry
 from signalgrid.execution.grid import GridEntryLevel, GridPlan
 from signalgrid.models import Direction
@@ -29,8 +29,9 @@ def plan():
 
 
 class FakeAdapter:
-    def __init__(self, fail_on=None):
+    def __init__(self, fail_on=None, missing_algo_once=None):
         self.fail_on = fail_on
+        self.missing_algo_once = missing_algo_once
         self.calls = []
         self.canceled_orders = []
         self.canceled_algos = []
@@ -62,6 +63,9 @@ class FakeAdapter:
 
     async def cancel_algo_order(self, client_algo_id):
         self.canceled_algos.append(client_algo_id)
+        if self.missing_algo_once == client_algo_id:
+            self.missing_algo_once = None
+            raise BinanceOrderNotFoundError("(-2011, 'Unknown order sent.')")
 
 
 def test_campaign_open_sequence_and_registry_ownership(tmp_path):
@@ -127,3 +131,37 @@ def test_recovery_halts_if_live_position_has_no_active_stop(tmp_path):
         raise AssertionError("missing stop on recovery must fail closed")
     assert store.halted() is True
     assert store.halt_reason() == "GRID_RECOVERY_MISSING_STOP:SOLUSDT"
+
+
+def test_flat_cleanup_treats_unknown_algo_order_as_pending_convergence_not_halt(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    adapter = FakeAdapter()
+    executor = GridCampaignExecutor(adapter, store)
+    result = asyncio.run(executor.open_campaign(plan()))
+    record = result.campaign
+
+    for i, cid in enumerate((record.stop_client_id, record.take_profit_client_id), start=1):
+        store.upsert_algo_order(StoredAlgoOrder(
+            cid,
+            f"40{i}",
+            "SOLUSDT",
+            "SELL",
+            "NEW",
+            "CONDITIONAL",
+            "STOP_MARKET" if i == 1 else "TAKE_PROFIT_MARKET",
+            Decimal("98") if i == 1 else Decimal("101"),
+            Decimal("0"),
+            True,
+            False,
+            "",
+            2000 + i,
+        ))
+
+    adapter.missing_algo_once = record.stop_client_id
+    assert asyncio.run(executor.cleanup_if_flat("SOLUSDT")) is False
+    assert store.halted() is False
+    assert GridCampaignRegistry(store).get("SOLUSDT").status == "ACTIVE"
+
+    assert asyncio.run(executor.cleanup_if_flat("SOLUSDT")) is True
+    assert store.halted() is False
+    assert GridCampaignRegistry(store).get("SOLUSDT").status == "CLOSED"
