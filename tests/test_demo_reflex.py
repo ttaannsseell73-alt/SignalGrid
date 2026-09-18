@@ -18,9 +18,14 @@ class FakeResponse:
 
 
 class FakeRest:
-    def __init__(self, dual_side: bool):
+    def __init__(self, dual_side: bool, *, orders=None, algos=None, positions=None):
         self.dual_side = dual_side
         self.leverage_calls: list[tuple[str, int]] = []
+        self.orders = list(orders or [])
+        self.algos = list(algos or [])
+        self.positions = list(positions or [])
+        self.cancel_order_calls = []
+        self.cancel_algo_calls = []
 
     def get_current_position_mode(self):
         return FakeResponse(SimpleNamespace(dual_side_position=self.dual_side))
@@ -28,6 +33,23 @@ class FakeRest:
     def change_initial_leverage(self, *, symbol: str, leverage: int):
         self.leverage_calls.append((symbol, leverage))
         return FakeResponse({"symbol": symbol, "leverage": leverage})
+
+    def current_all_open_orders(self):
+        return FakeResponse(list(self.orders))
+
+    def current_all_algo_open_orders(self):
+        return FakeResponse(list(self.algos))
+
+    def position_information_v3(self):
+        return FakeResponse(list(self.positions))
+
+    def cancel_order(self, *, symbol: str, order_id: int):
+        self.cancel_order_calls.append((symbol, order_id))
+        self.orders = [x for x in self.orders if int(x["orderId"]) != int(order_id)]
+
+    def cancel_algo_order(self, *, client_algo_id: str):
+        self.cancel_algo_calls.append(client_algo_id)
+        self.algos = [x for x in self.algos if x["clientAlgoId"] != client_algo_id]
 
 
 def _result(symbol: str, direction: Direction, age: int = 4, compute: float = 1.5, *, setup: str | None = None, emitted: bool | None = None, decision_reason: str | None = None):
@@ -109,3 +131,85 @@ def test_reflex_stats_records_signal_gate_rejections_and_emissions():
     assert snap["rejection_reasons"]["NO_STRUCTURE"] == 1
     assert snap["rejection_reasons"]["NO_VOL_EXPANSION"] == 1
     assert snap["rejection_reasons"]["SIGNAL_DEBOUNCE"] == 1
+
+
+def test_demo_preflight_cleans_stale_owned_signalgrid_orders_before_leverage():
+    rest = FakeRest(
+        dual_side=False,
+        orders=[
+            {
+                "clientOrderId": "sg-g-abc",
+                "orderId": 101,
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "status": "NEW",
+                "type": "LIMIT",
+                "origQty": "0.01",
+                "executedQty": "0",
+                "avgPrice": "0",
+                "reduceOnly": False,
+            }
+        ],
+        algos=[
+            {
+                "clientAlgoId": "sg-x-def",
+                "algoId": 202,
+                "symbol": "BTCUSDT",
+                "side": "SELL",
+                "algoStatus": "NEW",
+                "algoType": "CONDITIONAL",
+                "orderType": "STOP_MARKET",
+                "triggerPrice": "100",
+                "quantity": "0",
+                "closePosition": True,
+                "reduceOnly": False,
+                "actualOrderId": "",
+            }
+        ],
+    )
+    result = preflight_demo(rest, ("BTCUSDT",), leverage=3)
+    assert result == {"canceled_orders": 1, "canceled_algos": 1}
+    assert rest.cancel_order_calls == [("BTCUSDT", 101)]
+    assert rest.cancel_algo_calls == ["sg-x-def"]
+    assert rest.leverage_calls == [("BTCUSDT", 3)]
+
+
+def test_demo_preflight_refuses_foreign_open_order():
+    rest = FakeRest(
+        dual_side=False,
+        orders=[
+            {
+                "clientOrderId": "manual-order",
+                "orderId": 303,
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "status": "NEW",
+                "type": "LIMIT",
+                "origQty": "0.01",
+                "executedQty": "0",
+                "avgPrice": "0",
+                "reduceOnly": False,
+            }
+        ],
+    )
+    with pytest.raises(RuntimeError, match="non-SignalGrid"):
+        preflight_demo(rest, ("BTCUSDT",), leverage=3)
+    assert rest.cancel_order_calls == []
+    assert rest.leverage_calls == []
+
+
+def test_demo_preflight_refuses_open_position():
+    rest = FakeRest(
+        dual_side=False,
+        positions=[
+            {
+                "symbol": "BTCUSDT",
+                "positionAmt": "0.01",
+                "positionSide": "BOTH",
+                "entryPrice": "100000",
+            }
+        ],
+    )
+    with pytest.raises(RuntimeError, match="open position"):
+        preflight_demo(rest, ("BTCUSDT",), leverage=3)
+    assert rest.leverage_calls == []
