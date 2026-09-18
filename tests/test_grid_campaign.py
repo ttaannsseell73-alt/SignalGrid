@@ -37,6 +37,11 @@ class FakeAdapter:
         self.canceled_algos = []
         self.emergency = []
 
+    def validate_protective_exit(self, intent):
+        self.calls.append(("validate", intent.order_type, intent.idempotency_key))
+        if self.fail_on == f"PRECHECK_{intent.order_type}":
+            raise RuntimeError(f"invalid {intent.order_type} trigger")
+
     async def place_entry_receipt(self, intent):
         self.calls.append(("starter", intent.idempotency_key))
         if self.fail_on == "STARTER":
@@ -76,7 +81,7 @@ def test_campaign_open_sequence_and_registry_ownership(tmp_path):
     executor = GridCampaignExecutor(adapter, store)
     result = asyncio.run(executor.open_campaign(plan()))
     assert result.campaign.status == "ACTIVE"
-    assert [x[0] for x in adapter.calls] == ["starter", "STOP_MARKET", "TAKE_PROFIT_MARKET", "limit", "limit", "limit"]
+    assert [x[0] for x in adapter.calls] == ["validate", "validate", "starter", "STOP_MARKET", "TAKE_PROFIT_MARKET", "limit", "limit", "limit"]
     persisted = GridCampaignRegistry(store).active("SOLUSDT")
     assert persisted is not None
     assert persisted.starter_client_id == client_order_id("e", "camp-001:starter")
@@ -183,4 +188,22 @@ def test_starter_failure_before_exposure_does_not_halt_account(tmp_path):
 
     assert store.halted() is False
     assert GridCampaignRegistry(store).get("SOLUSDT").status == "FAILED"
+    assert adapter.emergency == []
+
+
+def test_invalid_stop_precheck_rejects_campaign_before_exposure_without_halt(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    adapter = FakeAdapter(fail_on="PRECHECK_STOP_MARKET")
+    executor = GridCampaignExecutor(adapter, store)
+
+    try:
+        asyncio.run(executor.open_campaign(plan()))
+    except GridCampaignError as exc:
+        assert "before exposure" in str(exc)
+    else:
+        raise AssertionError("invalid stop precheck must fail campaign")
+
+    assert store.halted() is False
+    assert GridCampaignRegistry(store).get("SOLUSDT").status == "FAILED"
+    assert not any(call[0] == "starter" for call in adapter.calls)
     assert adapter.emergency == []
