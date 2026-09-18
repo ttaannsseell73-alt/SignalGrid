@@ -50,6 +50,14 @@ class RecoveryExecutor:
         self.recoveries += 1
 
 
+class FailingOpenExecutor:
+    async def open_campaign(self, plan):
+        try:
+            raise RuntimeError("(-2010, 'starter rejected')")
+        except RuntimeError as cause:
+            raise RuntimeError("grid starter entry failed before exposure") from cause
+
+
 def _state(router):
     state = router.state("SOLUSDT")
     for i in range(60):
@@ -166,5 +174,35 @@ def test_paper_run_warms_up_and_records_clean_stop(tmp_path):
         assert store.get_runtime("runtime_status") == "STOPPED"
         assert store.get_runtime("runtime_mode") == "PAPER"
         assert store.get_runtime("runtime_stats") is not None
+
+    asyncio.run(scenario())
+
+
+def test_testnet_open_failure_persists_exact_diagnostic_without_forcing_halt(tmp_path):
+    async def scenario():
+        store = StateStore(tmp_path / "state.db")
+        router = BinanceMarketEventRouter()
+        runtime = SignalGridRuntime(
+            RuntimeConfig(RuntimeMode.TESTNET, ("BTCUSDT",), str(tmp_path / "state.db")),
+            store=store,
+            router=router,
+            scanner=DummyScanner(),
+            public_transport=DummyPublic(),
+            warmup=DummyWarmup(),
+            campaign_executor=FailingOpenExecutor(),
+        )
+        plan = type("Plan", (), {"symbol": "BTCUSDT", "campaign_id": "cmp-btc"})()
+        runtime._opening_symbols.add("BTCUSDT")
+        await runtime._open_testnet(plan, 7)
+
+        assert runtime.stats.open_failures == 1
+        assert store.halted() is False
+        payload = json.loads(store.get_runtime("last_open_error"))
+        assert payload["phase"] == "EXECUTION"
+        assert payload["symbol"] == "BTCUSDT"
+        assert payload["campaign_id"] == "cmp-btc"
+        assert payload["cause_type"] == "RuntimeError"
+        assert "starter rejected" in payload["cause_message"]
+        assert "BTCUSDT" not in runtime._opening_symbols
 
     asyncio.run(scenario())

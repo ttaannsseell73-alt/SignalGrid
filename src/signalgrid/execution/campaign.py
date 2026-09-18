@@ -216,7 +216,10 @@ class GridCampaignExecutor:
             record = self.registry.set_status(plan.symbol, "ACTIVE")
             return GridOpenResult(record, starter_receipt.exchange_order_id, tuple(limit_order_ids))
         except Exception as exc:
-            if starter_receipt is not None and not stop_placed:
+            if starter_receipt is None:
+                self.registry.set_status(plan.symbol, "FAILED")
+                raise GridCampaignError("grid starter entry failed before exposure") from exc
+            if not stop_placed:
                 try:
                     await self.adapter.place_reduce_only_market(
                         ReduceOnlyMarketIntent(

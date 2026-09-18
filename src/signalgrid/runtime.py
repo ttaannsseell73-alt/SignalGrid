@@ -277,8 +277,9 @@ class SignalGridRuntime:
         self.stats.signals_emitted += 1
         try:
             plan = build_grid_plan(result.signal, result.decision, state, self.grid_config)
-        except Exception:
+        except Exception as exc:
             self.stats.open_failures += 1
+            self._record_open_error("PLAN", state.symbol, None, exc)
             return
         if self.config.mode is RuntimeMode.PAPER:
             if self.paper_broker is None or self.paper_broker.active_campaign(plan.symbol) is not None:
@@ -303,8 +304,9 @@ class SignalGridRuntime:
             await self.campaign_executor.open_campaign(plan)
             self.stats.campaigns_opened += 1
             self.stats.add_latency(event_age_ms + (monotonic() - started) * 1000.0)
-        except Exception:
+        except Exception as exc:
             self.stats.open_failures += 1
+            self._record_open_error("EXECUTION", plan.symbol, getattr(plan, "campaign_id", None), exc)
         finally:
             self._opening_symbols.discard(plan.symbol)
             self._persist_stats()
@@ -340,6 +342,21 @@ class SignalGridRuntime:
             if await self.campaign_executor.cleanup_if_flat(record.symbol):
                 self.stats.cleanups += 1
                 self.stats.campaigns_closed += 1
+
+    def _record_open_error(self, phase: str, symbol: str, campaign_id: str | None, exc: Exception) -> None:
+        cause = exc.__cause__
+        payload = {
+            "phase": phase,
+            "symbol": symbol.upper(),
+            "campaign_id": campaign_id,
+            "error_type": type(exc).__name__,
+            "message": str(exc),
+            "cause_type": type(cause).__name__ if cause is not None else None,
+            "cause_message": str(cause) if cause is not None else None,
+            "halt_reason": self.store.halt_reason(),
+            "at_ms": int(time() * 1000),
+        }
+        self.store.set_runtime("last_open_error", json.dumps(payload, sort_keys=True))
 
     def _persist_stats(self) -> None:
         self.store.set_runtime("runtime_stats", json.dumps(self.stats.snapshot(), sort_keys=True))

@@ -270,6 +270,7 @@ async def _run_demo_with_progress(
                         "demo_progress": True,
                         "runtime": runtime.stats.snapshot(),
                         "reflex": reflex.snapshot(),
+                        "last_open_error": json.loads(runtime.store.get_runtime("last_open_error", "null") or "null"),
                     },
                     sort_keys=True,
                 ),
@@ -338,6 +339,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             "soak": report.to_dict(),
             "runtime": runtime.stats.snapshot(),
             "reflex": reflex.snapshot(),
+            "last_open_error": json.loads(runtime.store.get_runtime("last_open_error", "null") or "null"),
         }
         print(json.dumps(payload, indent=2 if args.pretty else None, sort_keys=True))
         return 0 if report.passed else 2

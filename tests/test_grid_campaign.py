@@ -39,6 +39,8 @@ class FakeAdapter:
 
     async def place_entry_receipt(self, intent):
         self.calls.append(("starter", intent.idempotency_key))
+        if self.fail_on == "STARTER":
+            raise RuntimeError("starter rejected")
         return ExecutionReceipt(intent.symbol, client_order_id("e", intent.idempotency_key), "1001", Decimal("2.0"), Decimal("100"))
 
     async def place_protective_exit(self, intent):
@@ -165,3 +167,20 @@ def test_flat_cleanup_treats_unknown_algo_order_as_pending_convergence_not_halt(
     assert asyncio.run(executor.cleanup_if_flat("SOLUSDT")) is True
     assert store.halted() is False
     assert GridCampaignRegistry(store).get("SOLUSDT").status == "CLOSED"
+
+
+def test_starter_failure_before_exposure_does_not_halt_account(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    adapter = FakeAdapter(fail_on="STARTER")
+    executor = GridCampaignExecutor(adapter, store)
+
+    try:
+        asyncio.run(executor.open_campaign(plan()))
+    except GridCampaignError as exc:
+        assert "before exposure" in str(exc)
+    else:
+        raise AssertionError("starter failure must fail the campaign")
+
+    assert store.halted() is False
+    assert GridCampaignRegistry(store).get("SOLUSDT").status == "FAILED"
+    assert adapter.emergency == []
