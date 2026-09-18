@@ -26,6 +26,7 @@ class FakeRest:
         self.positions = list(positions or [])
         self.cancel_order_calls = []
         self.cancel_algo_calls = []
+        self.new_order_calls = []
 
     def get_current_position_mode(self):
         return FakeResponse(SimpleNamespace(dual_side_position=self.dual_side))
@@ -42,6 +43,23 @@ class FakeRest:
 
     def position_information_v3(self):
         return FakeResponse(list(self.positions))
+
+    def new_order(self, **kwargs):
+        self.new_order_calls.append(kwargs)
+        symbol = kwargs["symbol"]
+        side = kwargs["side"]
+        if kwargs.get("reduce_only") == "true" and kwargs.get("type") == "MARKET":
+            remaining = []
+            for item in self.positions:
+                if item["symbol"] != symbol:
+                    remaining.append(item)
+                    continue
+                amt = float(item["positionAmt"])
+                if (amt > 0 and side == "SELL") or (amt < 0 and side == "BUY"):
+                    continue
+                remaining.append(item)
+            self.positions = remaining
+        return FakeResponse({"orderId": 999})
 
     def cancel_order(self, *, symbol: str, order_id: int):
         self.cancel_order_calls.append((symbol, order_id))
@@ -168,7 +186,7 @@ def test_demo_preflight_cleans_stale_owned_signalgrid_orders_before_leverage():
         ],
     )
     result = preflight_demo(rest, ("BTCUSDT",), leverage=3)
-    assert result == {"canceled_orders": 1, "canceled_algos": 1}
+    assert result == {"canceled_orders": 1, "canceled_algos": 1, "closed_positions": 0}
     assert rest.cancel_order_calls == [("BTCUSDT", 101)]
     assert rest.cancel_algo_calls == ["sg-x-def"]
     assert rest.leverage_calls == [("BTCUSDT", 3)]
@@ -198,7 +216,7 @@ def test_demo_preflight_refuses_foreign_open_order():
     assert rest.leverage_calls == []
 
 
-def test_demo_preflight_refuses_open_position():
+def test_demo_preflight_flattens_stale_position_in_configured_universe():
     rest = FakeRest(
         dual_side=False,
         positions=[
@@ -210,6 +228,84 @@ def test_demo_preflight_refuses_open_position():
             }
         ],
     )
-    with pytest.raises(RuntimeError, match="open position"):
+    result = preflight_demo(rest, ("BTCUSDT",), leverage=3)
+    assert result["closed_positions"] == 1
+    assert len(rest.new_order_calls) == 1
+    close = rest.new_order_calls[0]
+    assert close["symbol"] == "BTCUSDT"
+    assert close["side"] == "SELL"
+    assert close["type"] == "MARKET"
+    assert close["reduce_only"] == "true"
+    assert close["quantity"] == 0.01
+    assert rest.positions == []
+    assert rest.leverage_calls == [("BTCUSDT", 3)]
+
+
+def test_demo_preflight_refuses_position_outside_configured_universe():
+    rest = FakeRest(
+        dual_side=False,
+        positions=[
+            {
+                "symbol": "DOGEUSDT",
+                "positionAmt": "-5",
+                "positionSide": "BOTH",
+                "entryPrice": "0.2",
+            }
+        ],
+    )
+    with pytest.raises(RuntimeError, match="outside the configured SignalGrid universe"):
         preflight_demo(rest, ("BTCUSDT",), leverage=3)
+    assert rest.new_order_calls == []
     assert rest.leverage_calls == []
+
+
+def test_demo_preflight_keeps_protective_algo_until_position_is_flat():
+    rest = FakeRest(
+        dual_side=False,
+        positions=[
+            {
+                "symbol": "BTCUSDT",
+                "positionAmt": "-0.02",
+                "positionSide": "BOTH",
+                "entryPrice": "100000",
+            }
+        ],
+        orders=[
+            {
+                "clientOrderId": "sg-g-entry",
+                "orderId": 111,
+                "symbol": "BTCUSDT",
+                "side": "SELL",
+                "status": "NEW",
+                "type": "LIMIT",
+                "origQty": "0.01",
+                "executedQty": "0",
+                "avgPrice": "0",
+                "reduceOnly": False,
+            }
+        ],
+        algos=[
+            {
+                "clientAlgoId": "sg-x-protect",
+                "algoId": 222,
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "algoStatus": "NEW",
+                "algoType": "CONDITIONAL",
+                "orderType": "STOP_MARKET",
+                "triggerPrice": "101000",
+                "quantity": "0",
+                "closePosition": True,
+                "reduceOnly": False,
+                "actualOrderId": "",
+            }
+        ],
+    )
+    result = preflight_demo(rest, ("BTCUSDT",), leverage=3)
+    assert result == {"canceled_orders": 1, "canceled_algos": 1, "closed_positions": 1}
+    assert rest.cancel_order_calls == [("BTCUSDT", 111)]
+    assert rest.new_order_calls[0]["side"] == "BUY"
+    assert rest.cancel_algo_calls == ["sg-x-protect"]
+    assert rest.positions == []
+    assert rest.orders == []
+    assert rest.algos == []
