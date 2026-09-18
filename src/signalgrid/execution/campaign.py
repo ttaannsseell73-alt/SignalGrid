@@ -172,6 +172,25 @@ class GridCampaignExecutor:
         limit_order_ids: list[str] = []
         try:
             starter = plan.entries[0]
+            stop_intent = ProtectiveExitIntent(
+                plan.symbol,
+                plan.direction,
+                plan.invalidation,
+                f"{plan.campaign_id}:stop",
+                order_type="STOP_MARKET",
+            )
+            take_profit_intent = ProtectiveExitIntent(
+                plan.symbol,
+                plan.direction,
+                plan.take_profit,
+                f"{plan.campaign_id}:tp",
+                order_type="TAKE_PROFIT_MARKET",
+            )
+            # Validate both protective triggers against the latest contract price
+            # before creating any exposure. The adapter validates again at submit
+            # time to close the race as much as possible.
+            self.adapter.validate_protective_exit(stop_intent)
+            self.adapter.validate_protective_exit(take_profit_intent)
             starter_receipt = await self.adapter.place_entry_receipt(
                 OrderIntent(
                     plan.symbol,
@@ -183,25 +202,9 @@ class GridCampaignExecutor:
                     plan.reference_price,
                 )
             )
-            await self.adapter.place_protective_exit(
-                ProtectiveExitIntent(
-                    plan.symbol,
-                    plan.direction,
-                    plan.invalidation,
-                    f"{plan.campaign_id}:stop",
-                    order_type="STOP_MARKET",
-                )
-            )
+            await self.adapter.place_protective_exit(stop_intent)
             stop_placed = True
-            await self.adapter.place_protective_exit(
-                ProtectiveExitIntent(
-                    plan.symbol,
-                    plan.direction,
-                    plan.take_profit,
-                    f"{plan.campaign_id}:tp",
-                    order_type="TAKE_PROFIT_MARKET",
-                )
-            )
+            await self.adapter.place_protective_exit(take_profit_intent)
             for level in plan.entries[1:]:
                 receipt = await self.adapter.place_limit_entry_receipt(
                     LimitEntryIntent(
