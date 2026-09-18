@@ -7,6 +7,7 @@ from typing import Any
 
 from signalgrid.execution.binance import (
     BinanceExecutionPort,
+    BinanceOrderNotFoundError,
     LimitEntryIntent,
     OrderIntent,
     ProtectiveExitIntent,
@@ -243,15 +244,22 @@ class GridCampaignExecutor:
         position = self.store.get_account_position(record.symbol)
         if position is not None and position.quantity != 0:
             return False
+        pending_exchange_convergence = False
         try:
             for cid in record.limit_client_ids:
                 order = self.store.get_order(cid)
                 if order is not None and order.status in ACTIVE_ORDER_STATUSES and order.exchange_order_id:
-                    await self.adapter.cancel_order(record.symbol, order.exchange_order_id)
+                    try:
+                        await self.adapter.cancel_order(record.symbol, order.exchange_order_id)
+                    except BinanceOrderNotFoundError:
+                        pending_exchange_convergence = True
             for cid in (record.stop_client_id, record.take_profit_client_id):
                 algo = self.store.get_algo_order(cid)
                 if algo is not None and algo.status in ACTIVE_ALGO_STATUSES:
-                    await self.adapter.cancel_algo_order(cid)
+                    try:
+                        await self.adapter.cancel_algo_order(cid)
+                    except BinanceOrderNotFoundError:
+                        pending_exchange_convergence = True
         except Exception as exc:
             self.registry.set_status(record.symbol, "DEGRADED")
             self.store.halt(f"GRID_CLEANUP_FAILED:{record.symbol}")
@@ -262,6 +270,8 @@ class GridCampaignExecutor:
             self.registry.set_status(record.symbol, "DEGRADED")
             self.store.halt(f"GRID_CLEANUP_RACE:{record.symbol}")
             raise GridCampaignError("position reopened while cleanup was running")
+        if pending_exchange_convergence:
+            return False
         self.registry.mark_closed(record.symbol)
         return True
 
