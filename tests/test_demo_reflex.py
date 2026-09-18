@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from signalgrid.models import Direction
-from signalgrid.ops.run_demo_reflex import DEMO_RISK, ReflexStats, preflight_demo
+from signalgrid.ops.run_demo_reflex import DEMO_RISK, DEMO_SIGNAL_CONFIG, ReflexStats, preflight_demo
+from signalgrid.signals.engine import SignalConfig
 
 
 class FakeResponse:
@@ -29,10 +30,19 @@ class FakeRest:
         return FakeResponse({"symbol": symbol, "leverage": leverage})
 
 
-def _result(symbol: str, direction: Direction, age: int = 4, compute: float = 1.5):
+def _result(symbol: str, direction: Direction, age: int = 4, compute: float = 1.5, *, setup: str | None = None, emitted: bool | None = None, decision_reason: str | None = None):
+    if setup is None:
+        setup = "NO_STRUCTURE" if direction is Direction.PASS else "BREAKOUT_ACCEPTANCE"
+    if emitted is None:
+        emitted = direction is not Direction.PASS
+    approved = direction is not Direction.PASS and bool(emitted)
+    if decision_reason is None:
+        decision_reason = "APPROVED" if approved else ("NO_VALID_SIGNAL" if direction is Direction.PASS else "SIGNAL_DEBOUNCE")
     return SimpleNamespace(
         symbol=symbol,
-        signal=SimpleNamespace(direction=direction),
+        signal=SimpleNamespace(direction=direction, setup=setup),
+        decision=SimpleNamespace(approved=approved, reason=decision_reason),
+        emitted=bool(emitted),
         market_event_age_ms=age,
         compute_latency_ms=compute,
     )
@@ -68,3 +78,34 @@ def test_reflex_stats_count_direction_changes_and_latency():
     assert snap["long_to_short_reversals"] == 0
     assert snap["transition_response_median_ms"] == 7.5
     assert snap["transition_response_p95_ms"] == 10.0
+
+
+def test_demo_signal_profile_is_reactive_without_changing_production_defaults():
+    prod = SignalConfig()
+    assert DEMO_SIGNAL_CONFIG.structure_lookback == 5
+    assert DEMO_SIGNAL_CONFIG.structure_lookback < prod.structure_lookback
+    assert DEMO_SIGNAL_CONFIG.min_expansion < prod.min_expansion
+    assert DEMO_SIGNAL_CONFIG.entry_threshold < prod.entry_threshold
+    assert prod.structure_lookback == 20
+    assert prod.min_expansion == 1.05
+    assert prod.entry_threshold == 0.60
+
+
+def test_reflex_stats_records_signal_gate_rejections_and_emissions():
+    stats = ReflexStats()
+    stats.observe(_result("UNIUSDT", Direction.PASS, setup="NO_STRUCTURE"))
+    stats.observe(_result("UNIUSDT", Direction.PASS, setup="NO_VOL_EXPANSION"))
+    stats.observe(_result("UNIUSDT", Direction.LONG, emitted=False, decision_reason="SIGNAL_DEBOUNCE"))
+    stats.observe(_result("UNIUSDT", Direction.LONG, emitted=True))
+    stats.observe(_result("NEARUSDT", Direction.SHORT, emitted=True))
+
+    snap = stats.snapshot()
+    assert snap["evaluations_seen"] == 5
+    assert snap["pass_signals_seen"] == 2
+    assert snap["long_signals_seen"] == 2
+    assert snap["short_signals_seen"] == 1
+    assert snap["emitted_long"] == 1
+    assert snap["emitted_short"] == 1
+    assert snap["rejection_reasons"]["NO_STRUCTURE"] == 1
+    assert snap["rejection_reasons"]["NO_VOL_EXPANSION"] == 1
+    assert snap["rejection_reasons"]["SIGNAL_DEBOUNCE"] == 1
