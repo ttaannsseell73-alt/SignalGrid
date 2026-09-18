@@ -53,6 +53,7 @@ Locked constraints:
 - M6 Binance Futures Demo reflex runner: `765cf313e3575d5af1474338a58c9f11e192c62a`
 - M6 Demo signal-active reflex profile + diagnostics: `68cecc367291441cd4861f4ec661a5fce7f3090a`
 - M6 cleanup idempotency hardening for Binance -2011 races: `32725fa41479374b96ead84900ca3ddb57622988`
+- M6 pre-exposure starter failure hardening + root-cause telemetry: `e80243ba78f209080596c381b04dcaa1dfe2a2eb`
 
 ## Milestones
 - [x] M0 project skeleton
@@ -85,12 +86,14 @@ Locked constraints:
 - Authenticated Demo rerun on 2026-09-18 proved directional signal/execution path: 1 emitted LONG, 1 campaign opened, 0 open failures; rejection distribution at failure point included NO_STRUCTURE 48, NO_VOL_EXPANSION 29, LIQUIDITY_GATE 15, SYMBOL_ALREADY_ACTIVE 15.
 - The same run exposed a cleanup race: Binance returned -2011 `Unknown order sent` when a flat-campaign sibling algo order had already disappeared from the exchange. This incorrectly halted the soak.
 - PR #11 merged as `32725fa41479374b96ead84900ca3ddb57622988`; CI PASS on Python 3.11/3.12/3.13. Flat cleanup now treats only Binance order-not-found (-2011) as pending exchange/user-stream convergence; other cleanup failures remain fail-closed.
+- Next authenticated Demo run produced 44 LONG signals seen, 2 emitted LONG signals, 1 campaign opened, then `GRID_OPEN_DEGRADED:BTCUSDT`. Health at failure showed only one full campaign footprint (1 position, 3 active regular orders, 2 active algos) despite 2 active campaign records, strongly indicating the second BTC campaign failed at starter entry before exposure.
+- PR #12 merged as `e80243ba78f209080596c381b04dcaa1dfe2a2eb`; CI PASS on Python 3.11/3.12/3.13. Starter failures before any exposure now mark the campaign FAILED without account HALT; once exposure exists, stop/protection failures remain fail-closed. Runtime now persists `last_open_error` with phase, symbol, campaign, exception and root cause; Demo progress surfaces it directly.
 - Locked follow-up after directional signal/execution proof: add `NEUTRAL_GRID` as a distinct regime outcome; `PASS` remains no-trade. Dynamic leverage remains a later required Risk Hub feature.
 - No live-capital path is enabled.
 
 ## Immediate next task
-1. Pull canonical `main` containing cleanup hardening and rerun `scripts/start_demo_reflex.ps1` with the existing Binance Futures Demo credentials.
-2. Verify the prior -2011 cleanup race no longer halts the run and that at least one complete open→protected→flat→cleanup lifecycle finishes healthy.
-3. Inspect `signals_emitted`, `campaigns_opened`, `campaigns_closed`, `cleanups`, `open_failures`, `halted_samples`, and rejection telemetry during the rerun.
+1. Pull canonical `main` containing starter-failure hardening and rerun `scripts/start_demo_reflex.ps1` with the existing Binance Futures Demo credentials.
+2. Watch `last_open_error` directly in each Demo progress sample. If another starter rejection occurs, capture its exact Binance cause without halting the account.
+3. Verify at least one complete open→protected→flat→cleanup lifecycle finishes healthy and the prior -2011 cleanup race does not recur.
 4. After one clean directional lifecycle, implement the locked four-outcome regime model: `NEUTRAL_GRID / LONG_GRID / SHORT_GRID / PASS`.
 5. Then add the Dynamic Leverage Controller in Risk Hub and proceed to 1h, 24h and 72h Demo validation.
