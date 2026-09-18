@@ -8,6 +8,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
+from time import sleep
 from typing import Any, Iterable
 
 from signalgrid.engine import SignalGridEngine
@@ -18,6 +19,7 @@ from signalgrid.risk.engine import RiskConfig, RiskEngine
 from signalgrid.signals.engine import SignalConfig, SignalEngine
 from signalgrid.runtime import RuntimeConfig, RuntimeMode, SignalGridRuntime
 from signalgrid.scanner import MultiSymbolScanner, ScanResult
+from signalgrid.state.reconciliation import BinanceRestSnapshotProvider
 
 # Binance Futures Demo Trading. REST URL is exposed by the official connector;
 # the stream endpoint is the matching Demo Futures stream host.
@@ -159,8 +161,62 @@ def _dual_side_position(response: Any) -> bool | None:
     return None if value is None else bool(value)
 
 
-def preflight_demo(rest_api: Any, symbols: tuple[str, ...], leverage: int = 3) -> None:
-    """Fail before trading if account mode is incompatible; pin symbol leverage."""
+def _is_owned_client_id(value: str) -> bool:
+    return bool(value) and value.startswith("sg-")
+
+
+def _cancel_stale_demo_orders(rest_api: Any) -> dict[str, int]:
+    provider = BinanceRestSnapshotProvider(rest_api)
+    snapshot = provider.snapshot()
+
+    if snapshot.positions:
+        symbols = ",".join(p.symbol for p in snapshot.positions)
+        raise RuntimeError(
+            f"Demo preflight found open position(s): {symbols}. Close positions before starting a fresh reflex run."
+        )
+
+    foreign_orders = [o.client_order_id or o.exchange_order_id for o in snapshot.orders if not _is_owned_client_id(o.client_order_id)]
+    foreign_algos = [a.client_algo_id or a.algo_id for a in snapshot.algo_orders if not _is_owned_client_id(a.client_algo_id)]
+    if foreign_orders or foreign_algos:
+        foreign = ",".join(foreign_orders + foreign_algos)
+        raise RuntimeError(f"Demo preflight found non-SignalGrid open order(s): {foreign}")
+
+    canceled_orders = 0
+    canceled_algos = 0
+    for order in snapshot.orders:
+        try:
+            rest_api.cancel_order(symbol=order.symbol, order_id=int(order.exchange_order_id))
+            canceled_orders += 1
+        except Exception as exc:
+            if "-2011" not in str(exc) and "unknown order sent" not in str(exc).lower():
+                raise
+
+    for algo in snapshot.algo_orders:
+        try:
+            rest_api.cancel_algo_order(client_algo_id=algo.client_algo_id)
+            canceled_algos += 1
+        except Exception as exc:
+            if "-2011" not in str(exc) and "unknown order sent" not in str(exc).lower():
+                raise
+
+    if canceled_orders or canceled_algos:
+        for _ in range(8):
+            sleep(0.25)
+            remaining = provider.snapshot()
+            if not remaining.positions and not remaining.orders and not remaining.algo_orders:
+                break
+        else:
+            remaining_ids = [o.client_order_id or o.exchange_order_id for o in remaining.orders]
+            remaining_ids += [a.client_algo_id or a.algo_id for a in remaining.algo_orders]
+            raise RuntimeError(
+                "Demo preflight could not clear stale SignalGrid orders: " + ",".join(remaining_ids)
+            )
+
+    return {"canceled_orders": canceled_orders, "canceled_algos": canceled_algos}
+
+
+def preflight_demo(rest_api: Any, symbols: tuple[str, ...], leverage: int = 3) -> dict[str, int]:
+    """Verify account mode, clean stale owned Demo orders, then pin leverage."""
     position_mode = rest_api.get_current_position_mode()
     dual_side = _dual_side_position(position_mode)
     if dual_side is None:
@@ -168,8 +224,10 @@ def preflight_demo(rest_api: Any, symbols: tuple[str, ...], leverage: int = 3) -
     if dual_side:
         raise RuntimeError("SignalGrid requires Binance One-way Mode; Hedge Mode is enabled")
 
+    cleanup = _cancel_stale_demo_orders(rest_api)
     for symbol in symbols:
         rest_api.change_initial_leverage(symbol=symbol, leverage=leverage)
+    return cleanup
 
 
 def _parse_symbols(text: str) -> tuple[str, ...]:
@@ -205,7 +263,7 @@ def build_demo_runtime(symbols: tuple[str, ...], db_path: str) -> tuple[SignalGr
         raise RuntimeError("BINANCE_DEMO_API_KEY and BINANCE_DEMO_API_SECRET are required")
 
     _configure_demo_compat(api_key, api_secret)
-    preflight_demo(_demo_rest_api(api_key, api_secret), symbols, leverage=DEMO_RISK.leverage)
+    cleanup = preflight_demo(_demo_rest_api(api_key, api_secret), symbols, leverage=DEMO_RISK.leverage)
 
     runtime = SignalGridRuntime.from_environment(
         RuntimeConfig(mode=RuntimeMode.TESTNET, symbols=symbols, db_path=db_path)
@@ -226,6 +284,7 @@ def build_demo_runtime(symbols: tuple[str, ...], db_path: str) -> tuple[SignalGr
     runtime.store.set_runtime("environment_label", "BINANCE_FUTURES_DEMO")
     runtime.store.set_runtime("demo_rest_url", DEMO_REST_URL)
     runtime.store.set_runtime("demo_ws_stream_url", DEMO_WS_STREAM_URL)
+    runtime.store.set_runtime("demo_preflight_cleanup", json.dumps(cleanup, sort_keys=True))
     runtime.store.set_runtime(
         "demo_signal_profile",
         json.dumps({
