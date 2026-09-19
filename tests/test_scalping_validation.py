@@ -79,4 +79,34 @@ def test_validation_fails_closed_when_sample_has_no_trades():
         gate=ScalpingValidationGate(min_trades=1),
     )
     assert report.passed is False
+    assert report.oos_start_ms == 49 * 60_000
     assert any(reason.startswith("INSUFFICIENT_TRADES") for reason in report.reasons)
+    assert any(reason.startswith("OOS_INSUFFICIENT_TRADES") for reason in report.reasons)
+
+
+def test_validation_rejects_invalid_oos_fraction():
+    rows = [
+        HistoricalBar(
+            symbol="BTCUSDT",
+            open_time_ms=i * 60_000,
+            close_time_ms=(i + 1) * 60_000 - 1,
+            open=100.0,
+            high=100.01,
+            low=99.99,
+            close=100.0,
+            volume=1000.0,
+            quote_volume=100_000.0,
+            taker_buy_quote=50_000.0,
+            best_bid=99.995,
+            best_ask=100.005,
+            bid_depth=100.0,
+            ask_depth=100.0,
+        )
+        for i in range(70)
+    ]
+    import pytest
+    with pytest.raises(ValueError, match="oos_fraction"):
+        run_scalping_validation(
+            rows,
+            gate=ScalpingValidationGate(min_trades=1, oos_fraction=0.05),
+        )
