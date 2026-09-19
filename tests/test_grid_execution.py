@@ -46,6 +46,7 @@ def test_bounded_long_grid_has_starter_three_pullbacks_and_global_tp():
     assert plan.entries[2].price < plan.entries[1].price
     assert plan.entries[3].price < plan.entries[2].price
     assert plan.take_profit > plan.reference_price
+    assert round((plan.take_profit / plan.reference_price - 1.0) * 10_000.0, 6) == 30.0
     assert plan.invalidation < plan.reference_price
     assert 15 <= plan.spacing_bps <= 120
 
@@ -230,6 +231,7 @@ def test_single_entry_scalping_plan_has_no_resting_pullback_orders():
             min_spacing_bps=4.0,
             max_spacing_bps=25.0,
             take_profit_steps=1.2,
+            min_take_profit_bps=30.0,
         ),
     )
     assert len(plan.entries) == 1
@@ -237,3 +239,23 @@ def test_single_entry_scalping_plan_has_no_resting_pullback_orders():
     assert plan.entries[0].notional_usdt == 500.0
     assert plan.take_profit > plan.reference_price
     assert plan.invalidation < plan.reference_price
+
+
+def test_take_profit_floor_overrides_too_small_volatility_target():
+    s = state()
+    plan = build_grid_plan(
+        signal(s),
+        decision(),
+        s,
+        GridConfig(
+            entry_levels=1,
+            starter_fraction=1.0,
+            spacing_natr_multiplier=0.01,
+            min_spacing_bps=1.0,
+            max_spacing_bps=5.0,
+            take_profit_steps=1.0,
+            min_take_profit_bps=30.0,
+        ),
+    )
+    target_bps = (plan.take_profit / plan.reference_price - 1.0) * 10_000.0
+    assert round(target_bps, 6) == 30.0
