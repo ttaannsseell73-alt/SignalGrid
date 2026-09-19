@@ -6,6 +6,9 @@ on:
       - scalping-v1
     paths:
       - ".github/workflows/scalping-shadow-smoke.yml"
+      - "src/signalgrid/ops/run_scalping_shadow.py"
+      - "tests/test_scalping_shadow.py"
+      - "pyproject.toml"
   workflow_dispatch:
 
 jobs:
@@ -53,3 +56,5 @@ jobs:
           name: scalping-shadow-smoke
           path: artifacts/shadow-smoke.db
           retention-days: 7
+
+# revision: subscribe-v2
