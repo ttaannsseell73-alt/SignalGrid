@@ -67,5 +67,5 @@ SCALPING_GRID_CONFIG = GridConfig(
     min_spacing_bps=4.0,
     max_spacing_bps=25.0,
     take_profit_steps=1.2,
-    min_take_profit_bps=30.0,
+    min_take_profit_bps=40.0,
 )

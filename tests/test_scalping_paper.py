@@ -34,7 +34,7 @@ def test_canonical_sonar_signal_risk_paper_chain_opens_bounded_campaign(tmp_path
         close = 100.0 + (i % 2) * 0.02
         state.add_bar(Bar(close - 0.03, close + 0.12, close - 0.12, close, 900))
     prior_low = min(bar.low for bar in list(state.bars)[-12:])
-    state.add_bar(Bar(100.0, 100.20, prior_low - 0.25, 100.08, 1800))
+    state.add_bar(Bar(100.0, 100.20, prior_low - 0.05, 100.08, 1800))
     state.bid_depth, state.ask_depth = 70.0, 30.0
 
     try:
