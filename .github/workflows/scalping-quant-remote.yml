@@ -40,14 +40,16 @@ jobs:
       - name: Resolve UTC cache day
         id: cache_day
         shell: bash
-        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          echo "symbols=$(echo "$SYMBOLS" | tr ',' '-')" >> "$GITHUB_OUTPUT"
 
       - name: Restore historical kline cache
         id: data_cache
         uses: actions/cache/restore@v4
         with:
           path: data/scalping
-          key: scalping-kline-v1-${{ steps.cache_day.outputs.day }}-${{ env.DAYS }}-${{ env.SYMBOLS }}
+          key: scalping-kline-v1-${{ steps.cache_day.outputs.day }}-${{ env.DAYS }}-${{ steps.cache_day.outputs.symbols }}
 
       - name: Download historical klines
         if: steps.data_cache.outputs.cache-hit != 'true'
@@ -68,7 +70,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: data/scalping
-          key: scalping-kline-v1-${{ steps.cache_day.outputs.day }}-${{ env.DAYS }}-${{ env.SYMBOLS }}
+          key: scalping-kline-v1-${{ steps.cache_day.outputs.day }}-${{ env.DAYS }}-${{ steps.cache_day.outputs.symbols }}
 
       - name: Run multi-symbol no-lookahead quant gate
         id: quant
@@ -119,4 +121,4 @@ jobs:
           test -f validation/scalping_gate.json
           echo "Scalping quant gate PASS"
 
-# validation-revision: 4-diagnostics-cache
+# validation-revision: 5-cache-key-fix
