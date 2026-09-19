@@ -67,3 +67,18 @@ def test_duplicate_signal_is_debounced():
     assert second is not None
     assert not second.emitted
     assert second.reason == "SIGNAL_DEBOUNCE"
+
+
+class NeverWakeRadar:
+    def observe(self, state, now_ms):
+        return None
+
+
+def test_impulse_radar_can_keep_signal_hub_asleep():
+    now = [1_000_000]
+    s = scanner(now)
+    s.impulse_radar = NeverWakeRadar()
+    result = s.on_event(EventResult("SOLUSDT", "aggTrade", True))
+    assert result is not None
+    assert not result.emitted
+    assert result.reason == "IMPULSE_RADAR_SLEEP"
