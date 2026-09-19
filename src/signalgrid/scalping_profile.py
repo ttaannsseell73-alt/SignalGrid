@@ -23,7 +23,7 @@ SCALPING_SIGNAL_CONFIG = ScalpingConfig(
     min_directional_flow=0.03,
     min_score=0.62,
     min_stop_bps=3.0,
-    max_stop_bps=120.0,
+    max_stop_bps=75.0,
     ttl_seconds=3.0,
 )
 
