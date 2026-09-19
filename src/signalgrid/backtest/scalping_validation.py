@@ -87,7 +87,9 @@ def run_scalping_validation(
 
     This does not certify profitability. It only prevents Demo progression when
     the supplied historical sample does not meet explicit minimum evidence.
-    Historical book data remains mandatory through BacktestConfig.require_book.
+    Historical Binance USD-M validation uses only features present in current
+    public archives: closed-bar price action plus kline taker-flow. Book/spread
+    microstructure is explicitly unavailable here and is validated forward in Demo.
     """
 
     sig_cfg = signal_config or ScalpingConfig()
@@ -138,7 +140,7 @@ def run_scalping_validation(
         rows,
         backtest_config=stress_cfg,
         funding_points=funding_points,
-        engine=ScalpingSignalEngine(sig_cfg),
+        engine=ScalpingSignalEngine(historical_sig_cfg),
     )
 
     ordered_rows = sorted(rows, key=lambda r: r.open_time_ms)
@@ -151,14 +153,14 @@ def run_scalping_validation(
         rows,
         backtest_config=base_cfg,
         funding_points=funding_points,
-        engine=ScalpingSignalEngine(sig_cfg),
+        engine=ScalpingSignalEngine(historical_sig_cfg),
         trade_start_ms=oos_start_ms,
     )
     oos_stress = run_backtest(
         rows,
         backtest_config=stress_cfg,
         funding_points=funding_points,
-        engine=ScalpingSignalEngine(sig_cfg),
+        engine=ScalpingSignalEngine(historical_sig_cfg),
         trade_start_ms=oos_start_ms,
     )
 
