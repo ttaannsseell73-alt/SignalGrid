@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from time import time
 from signalgrid.market.state import SymbolState
-from signalgrid.models import Direction, Signal
+from signalgrid.models import Direction, GridMode, Signal
 from signalgrid.signals.flow import book_imbalance, spread_bps, taker_imbalance
 from signalgrid.signals.structure import detect_structure
 from signalgrid.signals.volatility import natr, volatility_expansion
@@ -16,6 +16,11 @@ class SignalConfig:
     min_flow_abs: float = 0.08
     min_book_abs: float = 0.05
     entry_threshold: float = 0.60
+    neutral_enabled: bool = True
+    neutral_max_expansion: float = 1.00
+    neutral_max_flow_abs: float = 0.12
+    neutral_max_book_abs: float = 0.12
+    neutral_entry_threshold: float = 0.55
     ttl_seconds: float = 20.0
 
 class SignalEngine:
@@ -35,7 +40,40 @@ class SignalEngine:
         if spr is None or spr > self.cfg.max_spread_bps:
             return Signal.pass_signal(state.symbol, "LIQUIDITY_GATE")
         if structure.direction == 0:
-            return Signal.pass_signal(state.symbol, "NO_STRUCTURE")
+            if not self.cfg.neutral_enabled:
+                return Signal.pass_signal(state.symbol, "NO_STRUCTURE")
+            if vx > self.cfg.neutral_max_expansion:
+                return Signal.pass_signal(state.symbol, "RANGE_TOO_VOLATILE")
+            if abs(ti) > self.cfg.neutral_max_flow_abs:
+                return Signal.pass_signal(state.symbol, "RANGE_FLOW_IMBALANCE")
+            if abs(bi) > self.cfg.neutral_max_book_abs:
+                return Signal.pass_signal(state.symbol, "RANGE_BOOK_IMBALANCE")
+            compression_score = min(
+                1.0,
+                max(
+                    0.0,
+                    (self.cfg.neutral_max_expansion - vx)
+                    / max(0.05, self.cfg.neutral_max_expansion - 0.70),
+                ),
+            )
+            flow_balance = 1.0 - min(1.0, abs(ti) / max(self.cfg.neutral_max_flow_abs, 1e-9))
+            book_balance = 1.0 - min(1.0, abs(bi) / max(self.cfg.neutral_max_book_abs, 1e-9))
+            strength = 0.45 + 0.25 * compression_score + 0.20 * flow_balance + 0.10 * book_balance
+            if strength < self.cfg.neutral_entry_threshold:
+                return Signal.pass_signal(state.symbol, "RANGE_LOW_SCORE")
+            now = time()
+            return Signal(
+                symbol=state.symbol,
+                direction=Direction.PASS,
+                strength=round(strength, 4),
+                regime="RANGE",
+                setup="RANGE_NEUTRAL",
+                invalidation=None,
+                liquidity_ok=True,
+                expires_at=now + self.cfg.ttl_seconds,
+                created_at=now,
+                grid_mode=GridMode.NEUTRAL_GRID,
+            )
         if vx < self.cfg.min_expansion:
             return Signal.pass_signal(state.symbol, "NO_VOL_EXPANSION")
         side = structure.direction
@@ -49,4 +87,16 @@ class SignalEngine:
         if strength < self.cfg.entry_threshold:
             return Signal.pass_signal(state.symbol, "LOW_SCORE")
         now = time()
-        return Signal(symbol=state.symbol, direction=Direction.LONG if side > 0 else Direction.SHORT, strength=round(strength, 4), regime="EXPANSION" if vx < self.cfg.strong_expansion else "HIGH_EXPANSION", setup=structure.setup, invalidation=structure.invalidation, liquidity_ok=True, expires_at=now + self.cfg.ttl_seconds, created_at=now)
+        direction = Direction.LONG if side > 0 else Direction.SHORT
+        return Signal(
+            symbol=state.symbol,
+            direction=direction,
+            strength=round(strength, 4),
+            regime="EXPANSION" if vx < self.cfg.strong_expansion else "HIGH_EXPANSION",
+            setup=structure.setup,
+            invalidation=structure.invalidation,
+            liquidity_ok=True,
+            expires_at=now + self.cfg.ttl_seconds,
+            created_at=now,
+            grid_mode=GridMode.LONG_GRID if direction is Direction.LONG else GridMode.SHORT_GRID,
+        )
