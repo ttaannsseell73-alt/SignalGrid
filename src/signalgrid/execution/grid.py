@@ -25,10 +25,13 @@ class GridConfig:
     neutral_ttl_seconds: float = 300.0
 
     def __post_init__(self) -> None:
-        if not 2 <= self.entry_levels <= 6:
-            raise ValueError("entry_levels must be between 2 and 6")
-        if not 0.0 < self.starter_fraction < 1.0:
-            raise ValueError("starter_fraction must be between 0 and 1")
+        if not 1 <= self.entry_levels <= 6:
+            raise ValueError("entry_levels must be between 1 and 6")
+        if self.entry_levels == 1:
+            if self.starter_fraction != 1.0:
+                raise ValueError("single-entry execution requires starter_fraction=1.0")
+        elif not 0.0 < self.starter_fraction < 1.0:
+            raise ValueError("multi-level execution requires starter_fraction between 0 and 1")
         if self.spacing_natr_multiplier <= 0:
             raise ValueError("spacing_natr_multiplier must be positive")
         if self.min_spacing_bps <= 0 or self.max_spacing_bps < self.min_spacing_bps:
@@ -162,15 +165,16 @@ def build_grid_plan(
     if side < 0 and signal.invalidation <= reference:
         raise GridPlanError("SHORT invalidation must be above reference price")
 
-    starter = total * cfg.starter_fraction
-    remaining = total - starter
-    per_limit = remaining / (cfg.entry_levels - 1)
+    starter = total if cfg.entry_levels == 1 else total * cfg.starter_fraction
     entries = [GridEntryLevel(0, "MARKET", reference, starter, signal.direction)]
-    for index in range(1, cfg.entry_levels):
-        price = reference * (1.0 - side * spacing * index)
-        if price <= 0:
-            raise GridPlanError("grid level price became non-positive")
-        entries.append(GridEntryLevel(index, "LIMIT", price, per_limit, signal.direction))
+    if cfg.entry_levels > 1:
+        remaining = total - starter
+        per_limit = remaining / (cfg.entry_levels - 1)
+        for index in range(1, cfg.entry_levels):
+            price = reference * (1.0 - side * spacing * index)
+            if price <= 0:
+                raise GridPlanError("grid level price became non-positive")
+            entries.append(GridEntryLevel(index, "LIMIT", price, per_limit, signal.direction))
 
     take_profit = reference * (1.0 + side * spacing * cfg.take_profit_steps)
     return GridPlan(
