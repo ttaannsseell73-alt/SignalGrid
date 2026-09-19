@@ -161,3 +161,22 @@ python -m pytest -q
 GitHub Actions tests Python 3.11, 3.12 and 3.13 on every push and pull request.
 
 No live-capital mode is enabled in Scalping V1.
+
+
+## Multi-symbol robustness pipeline
+
+The preferred generalization check is now:
+
+```text
+RUN_SCALPING_PORTFOLIO_30D.cmd
+```
+
+Default symbols:
+
+`BTCUSDT, ETHUSDT, SOLUSDT`
+
+For each symbol the pipeline downloads 30 days of Binance USD-M 1m klines and runs the same no-lookahead scalping validation. The portfolio gate is created only if **every requested symbol** passes its own base-cost, stressed-cost, OOS and parameter-robustness checks.
+
+The historical archive scope is intentionally `PRICE_ACTION_TAKER_ONLY`: current validation uses closed-bar price action plus the taker-buy quote field present in Binance kline archives. It does not synthesize missing historical order-book microstructure. Spread/book/absorption gates remain active in forward Demo trading.
+
+Parameter robustness uses a 3x3 neighborhood around the locked score and expansion thresholds. At least 60% of nearby parameter variants must retain positive OOS stressed expectancy. This is intended to reject knife-edge fits rather than optimize for a single best parameter set.
