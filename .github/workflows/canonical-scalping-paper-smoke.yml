@@ -22,19 +22,49 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+
       - name: Install
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+
+      - name: Download real Binance futures warmup bars
+        run: |
+          mkdir -p data/warmup
+          python - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+          from signalgrid.ops.download_scalping_data import download_dataset
+
+          day = datetime.now(timezone.utc).date() - timedelta(days=1)
+          download_dataset(
+              dataset="klines",
+              symbol="BTCUSDT",
+              start=day,
+              end=day,
+              output_csv=Path("data/warmup/BTCUSDT-1m.csv"),
+          )
+          PY
+
       - name: Run canonical Coin Sonar paper chain
         shell: bash
         run: |
           mkdir -p artifacts
-          python -m signalgrid.ops.run_scalping_paper             --symbols BTCUSDT             --hours 0.015             --sample-seconds 10             --db artifacts/canonical-paper.db             --journal artifacts/canonical-paper.jsonl             --overwrite-journal             --pretty
+          python -m signalgrid.ops.run_scalping_paper \
+            --symbols BTCUSDT \
+            --hours 0.015 \
+            --sample-seconds 10 \
+            --db artifacts/canonical-paper.db \
+            --journal artifacts/canonical-paper.jsonl \
+            --warmup-dir data/warmup \
+            --overwrite-journal \
+            --pretty
+
       - name: Verify locked runtime markers and live data
         run: |
           python - <<'PY'
@@ -47,9 +77,9 @@ jobs:
           assert rows["environment_label"] == "BINANCE_PUBLIC_PAPER"
           assert rows["warmup_source"] == "PRELOADED_REAL_MARKET_DATA"
           assert stats["market_events"] > 0
-          assert stats["evaluations"] >= 0
           print(json.dumps({"runtime": rows, "stats": stats}, indent=2, sort_keys=True))
           PY
+
       - name: Upload canonical smoke evidence
         if: always()
         uses: actions/upload-artifact@v4
