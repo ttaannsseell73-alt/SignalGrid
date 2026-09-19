@@ -344,7 +344,7 @@ class AccountReconciler:
     def _compare_algo(local: StoredAlgoOrder, remote: ExchangeAlgoSnapshot) -> list[str]:
         cid = local.client_algo_id
         mismatches: list[str] = []
-        pairs = (
+        pairs = [
             ("algo_id", local.algo_id, remote.algo_id),
             ("symbol", local.symbol, remote.symbol),
             ("side", local.side, remote.side),
@@ -352,10 +352,14 @@ class AccountReconciler:
             ("algo_type", local.algo_type, remote.algo_type),
             ("type", local.order_type, remote.order_type),
             ("trigger", local.trigger_price, remote.trigger_price),
-            ("qty", local.quantity, remote.quantity),
             ("close_position", local.close_position, remote.close_position),
             ("reduce_only", local.reduce_only, remote.reduce_only),
-        )
+        ]
+        # closePosition=true conditional orders intentionally have no fixed
+        # quantity contract. REST may report quantity=0 while a user-stream
+        # update for the same algo reports the current position quantity.
+        if not (local.close_position and remote.close_position):
+            pairs.append(("qty", local.quantity, remote.quantity))
         if local.actual_order_id and remote.actual_order_id and local.actual_order_id != remote.actual_order_id:
             mismatches.append(f"algo_actual_order_id:{cid}:{local.actual_order_id}!={remote.actual_order_id}")
         for field, left, right in pairs:
