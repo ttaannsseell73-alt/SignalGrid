@@ -21,6 +21,10 @@ def test_archive_urls_are_binance_usdm_daily_paths():
         "https://data.binance.vision/data/futures/um/daily/bookTicker/"
         "BTCUSDT/BTCUSDT-bookTicker-2026-09-18.zip"
     )
+    assert archive_url("aggTrades", "btcusdt", day) == (
+        "https://data.binance.vision/data/futures/um/daily/aggTrades/"
+        "BTCUSDT/BTCUSDT-aggTrades-2026-09-18.zip"
+    )
 
 
 def test_zip_merge_strips_repeated_headers(tmp_path):
