@@ -4,14 +4,15 @@ from signalgrid.models import Direction, Signal
 
 
 class OneShotEngine:
-    def __init__(self, direction=Direction.LONG, invalidation=95.0):
+    def __init__(self, direction=Direction.LONG, invalidation=95.0, emit_on=1):
         self.calls = 0
         self.direction = direction
         self.invalidation = invalidation
+        self.emit_on = emit_on
 
     def evaluate(self, state):
         self.calls += 1
-        if self.calls == 1:
+        if self.calls == self.emit_on:
             return Signal(state.symbol, self.direction, 0.9, "EXPANSION", "TEST", self.invalidation, True, 9999999999, 0)
         return Signal.pass_signal(state.symbol)
 
@@ -60,3 +61,58 @@ def test_missing_book_fails_instead_of_synthesizing():
         assert "historical book" in str(exc)
     else:
         raise AssertionError("missing book data must fail closed")
+
+
+def test_take_profit_uses_signal_time_natr_profile_and_exits_before_max_hold():
+    rows = []
+    for i in range(15):
+        rows.append(row(i, 100.0, 100.2, 99.8, 100.0))
+    rows.append(row(15, 100.0, 100.25, 99.95, 100.15))
+    rows.append(row(16, 100.15, 100.2, 100.0, 100.1))
+
+    cfg = BacktestConfig(
+        taker_fee_bps=0,
+        assumed_spread_bps=0,
+        slippage_bps=0,
+        max_holding_bars=3,
+        take_profit_enabled=True,
+        tp_spacing_natr_multiplier=0.20,
+        tp_min_spacing_bps=10.0,
+        tp_max_spacing_bps=10.0,
+        tp_steps=1.0,
+    )
+    result = run_backtest(
+        rows,
+        backtest_config=cfg,
+        engine=OneShotEngine(invalidation=99.0, emit_on=15),
+    )
+    assert result.metrics.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "TAKE_PROFIT"
+    assert round(trade.exit_price, 6) == 100.1
+
+
+def test_same_bar_stop_and_target_uses_conservative_stop_first():
+    rows = []
+    for i in range(15):
+        rows.append(row(i, 100.0, 100.2, 99.8, 100.0))
+    rows.append(row(15, 100.0, 100.25, 98.5, 100.1))
+    rows.append(row(16, 100.1, 100.2, 100.0, 100.1))
+
+    cfg = BacktestConfig(
+        taker_fee_bps=0,
+        assumed_spread_bps=0,
+        slippage_bps=0,
+        max_holding_bars=3,
+        take_profit_enabled=True,
+        tp_min_spacing_bps=10.0,
+        tp_max_spacing_bps=10.0,
+        tp_steps=1.0,
+    )
+    result = run_backtest(
+        rows,
+        backtest_config=cfg,
+        engine=OneShotEngine(invalidation=99.0, emit_on=15),
+    )
+    assert result.metrics.trades == 1
+    assert result.trades[0].exit_reason == "INVALIDATION_STOP"
