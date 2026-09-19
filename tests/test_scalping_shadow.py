@@ -2,16 +2,17 @@ from signalgrid.ops.run_scalping_shadow import (
     ShadowAccumulator,
     _imbalance,
     _microprice,
-    combined_stream_url,
+    subscription_names,
 )
 
 
-def test_shadow_stream_url_subscribes_trade_book_and_depth():
-    url = combined_stream_url(("BTCUSDT", "ETHUSDT"))
-    assert "btcusdt@aggTrade" in url
-    assert "btcusdt@bookTicker" in url
-    assert "btcusdt@depth20@100ms" in url
-    assert "ethusdt@depth20@100ms" in url
+def test_shadow_subscription_names_include_trade_book_and_depth():
+    names = subscription_names(("BTCUSDT", "ETHUSDT"))
+    assert "btcusdt@aggTrade" in names
+    assert "btcusdt@bookTicker" in names
+    assert "btcusdt@depth20@100ms" in names
+    assert "ethusdt@depth20@100ms" in names
+    assert len(names) == 6
 
 
 def test_shadow_accumulator_emits_previous_second():
