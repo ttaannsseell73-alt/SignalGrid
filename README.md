@@ -1,158 +1,136 @@
-# SignalGrid V1
+# SignalGrid — Scalping V1
 
-SignalGrid is a deliberately small, event-driven Binance USDⓈ-M Futures engine.
+Canonical branch: `scalping-v1`.
 
-## Locked V1 architecture
+This branch is the active Binance USDⓈ-M Futures scalping project. The old generic grid/demo strategy is not the active strategy line.
 
-1. Market Data Hub — market events/state only
-2. Signal Hub — VOL + STRUCTURE + FLOW -> LONG/SHORT/PASS
-3. Risk Hub — permission, size and exposure caps
-4. Execution Hub — bounded directional grid lifecycle only
-5. State/Ops Hub — persistent positions/orders, restart recovery and health checks
+## Locked architecture
 
-No AI, ML, TradingView runtime dependency, Hummingbot runtime, Freqtrade runtime, Nautilus, Rust or multi-exchange support in V1.
+`Market Data -> Price Action -> Microstructure -> Quant Validation -> Scalping Decision -> Execution -> Risk/Reconciliation`
 
-## Signal core
+Primary decision logic:
+- breakout + retest
+- liquidity sweep / failed breakout rejection
+- compression -> breakout
+- spread gate
+- taker-flow imbalance
+- top-of-book imbalance
+- volatility expansion
+- short-lived signal TTL
 
-- Volatility: NATR + short/long volatility expansion ratio
-- Structure: breakout + failed breakout/liquidity sweep
-- Flow: taker imbalance + order-book imbalance
-- Hygiene: signal expiry/debounce
-- Liquidity: spread gate
+Classic RSI/MACD/Stochastic/EMA-cross stacks are not the primary decision engine.
 
-## Bounded grid execution
+Grid logic is **execution only**. It is never allowed to create a trade by itself.
 
-A valid signal maps to one finite campaign per symbol:
+## Current Scalping V1 profile
 
-- 40% starter MARKET entry
-- three finite pullback LIMIT entries by default
-- NATR-derived spacing, bounded to configured limits
-- one global STOP_MARKET
-- one global TAKE_PROFIT_MARKET
-- deterministic client IDs and campaign ownership
-- no martingale, no automatic refill, no infinite grid
+- signal TTL: 3 seconds
+- max spread gate: 4 bps
+- structure lookback: 12 closed bars
+- flow confirmation required
+- no neutral-grid signal
+- maximum 3 concurrent Demo positions
+- 3x Demo leverage
+- bounded execution: 75% starter + one pullback level
+- no martingale
+- no infinite refill grid
+- fail-closed reconciliation
 
-Restart/reconnect reconciliation is fail-closed. An active position without its owned STOP or TP is not allowed to continue silently.
+## Quant gate — mandatory before Demo
 
-## Runtime modes
+Demo is locked until historical replay passes the cost-stressed validation gate.
 
-### PAPER
+The validator reports:
+- trades / hit rate
+- net expectancy
+- profit factor
+- max drawdown
+- fees + spread + slippage cost share
+- MAE / MFE
+- average holding time
+- performance by setup
+- performance by regime
+- base friction and stressed friction results
 
-Uses Binance production public market data with local bounded-grid execution simulation. No exchange orders are sent.
+Historical `bookTicker` coverage is mandatory. Missing order-book data is not replaced with fake proxies.
 
-```bash
-python -m signalgrid.runtime --mode paper --symbols BTCUSDT,ETHUSDT,SOLUSDT --db signalgrid.db
-```
-
-### TESTNET
-
-Uses Binance USD-M Futures testnet REST/WebSocket endpoints and authenticated account/user-data reconciliation.
-
-Required environment variables:
+Expected local data paths:
 
 ```text
-BINANCE_TESTNET_API_KEY
-BINANCE_TESTNET_API_SECRET
+data/scalping/BTCUSDT-1m.csv
+data/scalping/BTCUSDT-bookTicker.csv
+data/scalping/BTCUSDT-fundingRate.csv   # optional
 ```
 
-Run:
+On Windows:
 
-```bash
-python -m signalgrid.runtime --mode testnet --symbols BTCUSDT,ETHUSDT,SOLUSDT --db signalgrid.db
+```text
+RUN_SCALPING_VALIDATE.cmd
 ```
 
-TESTNET execution is blocked until account reconciliation and campaign recovery complete successfully. Every reconnect repeats recovery before the entry gate reopens.
+A passing validation creates the local, gitignored marker:
 
-## Offline validation
+```text
+validation/scalping_gate.json
+```
 
-The backtest reuses the production `SignalEngine`; it does not contain a second strategy implementation.
+The marker is tied to the current strategy profile version. A stale profile cannot unlock Demo.
 
-Rules:
+## Binance Futures Demo
 
-- signal is evaluated only after a bar closes
-- entry can occur only at the next bar open
-- configurable taker fees, assumed spread and slippage are charged
-- optional Binance funding events are applied while a position is open
-- real historical `bookTicker` is required for full-core runs; missing book data fails closed
-- walk-forward selects on train data and reports only following OOS windows
+Only after the quant gate passes:
 
-Example:
+```text
+RUN_SCALPING_DEMO.cmd
+```
+
+or:
+
+```text
+RUN_DEMO.cmd
+```
+
+First local run creates/uses `.env` for:
+
+```text
+BINANCE_DEMO_API_KEY=
+BINANCE_DEMO_API_SECRET=
+```
+
+Secrets are local only and gitignored.
+
+Demo safety:
+- Binance Futures Demo endpoints only
+- One-way Mode required
+- preflight pins 3x leverage
+- non-SignalGrid open orders fail closed
+- positions outside the configured universe fail closed
+- stale SignalGrid Demo state is reconciled/reset
+- protective STOP/TP lifecycle remains mandatory
+
+Default Demo universe:
+
+`BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT`
+
+## Direct CLI validation
 
 ```bash
-python -m signalgrid.backtest.cli \
+python -m signalgrid.backtest.scalping_cli \
   --symbol BTCUSDT \
-  --klines BTCUSDT-1m.csv \
-  --bookticker BTCUSDT-bookTicker.csv \
-  --funding BTCUSDT-fundingRate.csv \
-  --mode walk-forward
+  --klines data/scalping/BTCUSDT-1m.csv \
+  --bookticker data/scalping/BTCUSDT-bookTicker.csv \
+  --funding data/scalping/BTCUSDT-fundingRate.csv \
+  --gate-output validation/scalping_gate.json
 ```
 
-## Health and soak validation
-
-One health snapshot:
-
-```bash
-python -m signalgrid.ops.health --db signalgrid.db --pretty
-```
-
-Health fails when it detects conditions such as:
-
-- halted runtime
-- orphan account position
-- unowned active order/algo order
-- active position missing its campaign STOP
-- active position missing its campaign TAKE_PROFIT
-- TESTNET execution/user stream not ready
-
-Manual journal tools remain available:
-
-```bash
-python -m signalgrid.ops.soak sample --db signalgrid.db --journal soak.jsonl
-python -m signalgrid.ops.soak report --journal soak.jsonl --required-hours 24 --max-gap-seconds 180 --pretty
-```
-
-The report enforces continuous coverage. It does not accept two healthy samples many hours apart as a valid soak; any interval larger than `--max-gap-seconds` invalidates the run.
-
-### One-command PAPER soak
-
-This starts the runtime, waits for LIVE status, samples health, journals continuously and prints the final report:
-
-```bash
-python -m signalgrid.ops.run_soak \
-  --mode paper \
-  --symbols BTCUSDT,ETHUSDT,SOLUSDT \
-  --hours 24 \
-  --sample-seconds 60 \
-  --db signalgrid-paper.db \
-  --journal paper-24h.jsonl \
-  --overwrite-journal \
-  --pretty
-```
-
-### One-command TESTNET soak
-
-After PAPER is clean and testnet credentials are set:
-
-```bash
-python -m signalgrid.ops.run_soak \
-  --mode testnet \
-  --symbols BTCUSDT,ETHUSDT,SOLUSDT \
-  --hours 24 \
-  --sample-seconds 60 \
-  --db signalgrid-testnet.db \
-  --journal testnet-24h.jsonl \
-  --overwrite-journal \
-  --pretty
-```
-
-For the later 72-hour gate, change `--hours 24` to `--hours 72` and use a fresh journal path.
-
-A soak does not pass unless the requested duration is continuously covered with zero unhealthy samples, zero halts, zero protection gaps, zero orphan-state samples, zero campaign-open failures and no excessive gap in telemetry samples. The one-command runner stops early on an unhealthy sample instead of wasting the remaining soak window.
-
-No live-capital mode is enabled by M6. PAPER must be clean before TESTNET validation, and TESTNET must be clean before any later live-capital work is considered.
+The gate fails closed unless the supplied historical sample clears the configured minimum evidence and remains positive after stressed costs.
 
 ## Tests
 
 ```bash
 python -m pytest -q
 ```
+
+GitHub Actions tests Python 3.11, 3.12 and 3.13 on every push and pull request.
+
+No live-capital mode is enabled in Scalping V1.
