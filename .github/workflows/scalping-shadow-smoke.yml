@@ -37,8 +37,15 @@ jobs:
           rows = db.execute("SELECT COUNT(*) FROM microstructure_1s").fetchone()[0]
           symbols = db.execute("SELECT COUNT(DISTINCT symbol) FROM microstructure_1s").fetchone()[0]
           print({"rows": rows, "symbols": symbols})
+          trades = db.execute("SELECT COALESCE(SUM(trade_count),0) FROM microstructure_1s").fetchone()[0]
+          depth_nonzero = db.execute(
+              "SELECT COUNT(*) FROM microstructure_1s WHERE ABS(depth_imbalance_20) > 0"
+          ).fetchone()[0]
+          print({"rows": rows, "symbols": symbols, "trades": trades, "depth_nonzero": depth_nonzero})
           assert rows >= 10
           assert symbols == 1
+          assert trades > 0
+          assert depth_nonzero > 0
           PY
       - name: Upload smoke DB
         uses: actions/upload-artifact@v4
