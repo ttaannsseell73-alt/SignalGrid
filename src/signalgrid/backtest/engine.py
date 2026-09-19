@@ -49,6 +49,7 @@ class SimulatedTrade:
     holding_bars: int
     mae_usdt: float = 0.0
     mfe_usdt: float = 0.0
+    regime: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +255,7 @@ def run_backtest(
                     holding_bars=idx - entry_idx + 1,
                     mae_usdt=float(position["mae_usdt"]),
                     mfe_usdt=float(position["mfe_usdt"]),
+                    regime=sig.regime,
                 ))
                 position = None
 
@@ -290,6 +292,7 @@ def run_backtest(
             exit_reason="DATA_END", holding_bars=len(ordered)-int(position["entry_index"]),
             mae_usdt=float(position["mae_usdt"]),
             mfe_usdt=float(position["mfe_usdt"]),
+            regime=sig.regime,
         ))
 
     return BacktestResult(symbol, tuple(trades), metrics_from_trades(trades, cfg.starting_equity), skipped)
