@@ -81,6 +81,7 @@ jobs:
         id: quant
         shell: bash
         run: |
+          mkdir -p validation
           set +e
           python -m signalgrid.backtest.scalping_portfolio_cli             --symbols "$SYMBOLS"             --data-dir data/scalping             --gate-output validation/scalping_gate.json             > validation/portfolio_report.json
           code=$?
