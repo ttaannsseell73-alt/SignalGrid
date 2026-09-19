@@ -67,7 +67,7 @@ Write-Host "[SignalGrid Scalping] Paket kurulumu/guncellemesi..."
 if ($LASTEXITCODE -ne 0) { throw "SignalGrid kurulumu basarisiz." }
 
 $symbols = if ([string]::IsNullOrWhiteSpace($env:SIGNALGRID_SCALPING_SYMBOLS)) {
-    "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT"
+    "BTCUSDT"
 } else {
     $env:SIGNALGRID_SCALPING_SYMBOLS.Trim()
 }
