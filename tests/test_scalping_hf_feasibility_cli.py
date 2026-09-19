@@ -7,7 +7,7 @@ from signalgrid.backtest.scalping_hf_feasibility_cli import (
 
 
 def test_feasibility_horizons_and_costs_are_explicit():
-    assert HORIZON_BARS == (3, 6, 12)
+    assert HORIZON_BARS == (3, 6, 12, 24, 36, 60)
     assert BASE_ROUND_TRIP_COST_BPS == 12.5
     assert STRESS_ROUND_TRIP_COST_BPS == 23.0
 
