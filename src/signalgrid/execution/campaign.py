@@ -308,6 +308,9 @@ class GridCampaignExecutor:
                 )
                 placed.append((receipt.client_order_id, receipt.exchange_order_id))
             record = self.registry.set_status(plan.symbol, "ACTIVE")
+            position = self.store.get_account_position(plan.symbol)
+            if position is not None and position.quantity != 0:
+                record = await self._activate_neutral_position(record)
             return GridOpenResult(record, "", tuple(order_id for _, order_id in placed))
         except Exception as exc:
             position = self.store.get_account_position(plan.symbol)
