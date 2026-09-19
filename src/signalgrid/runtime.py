@@ -27,6 +27,11 @@ from signalgrid.state.user_data import UserDataResult
 from signalgrid.state.user_stream import BinanceUserStreamTransport
 
 
+REST_TIMEOUT_MS = 5_000
+REST_RETRIES = 3
+REST_BACKOFF_MS = 500
+
+
 class RuntimeMode(str, Enum):
     PAPER = "PAPER"
     TESTNET = "TESTNET"
@@ -130,7 +135,12 @@ class SignalGridRuntime:
         symbols = tuple(dict.fromkeys(s.upper() for s in config.symbols))
 
         if config.mode is RuntimeMode.PAPER:
-            rest_cfg = ConfigurationRestAPI(base_path=DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL)
+            rest_cfg = ConfigurationRestAPI(
+                base_path=DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL,
+                timeout=REST_TIMEOUT_MS,
+                retries=REST_RETRIES,
+                backoff=REST_BACKOFF_MS,
+            )
             rest_client = DerivativesTradingUsdsFutures(config_rest_api=rest_cfg)
 
             def public_factory() -> Any:
@@ -152,7 +162,14 @@ class SignalGridRuntime:
         api_secret = os.getenv("BINANCE_TESTNET_API_SECRET") or os.getenv("BINANCE_API_SECRET") or ""
         if not api_key or not api_secret:
             raise RuntimeError("TESTNET mode requires BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_API_SECRET")
-        rest_cfg = ConfigurationRestAPI(api_key=api_key, api_secret=api_secret, base_path=DERIVATIVES_TRADING_USDS_FUTURES_REST_API_TESTNET_URL)
+        rest_cfg = ConfigurationRestAPI(
+            api_key=api_key,
+            api_secret=api_secret,
+            base_path=DERIVATIVES_TRADING_USDS_FUTURES_REST_API_TESTNET_URL,
+            timeout=REST_TIMEOUT_MS,
+            retries=REST_RETRIES,
+            backoff=REST_BACKOFF_MS,
+        )
         rest_client = DerivativesTradingUsdsFutures(config_rest_api=rest_cfg)
 
         def public_factory() -> Any:
@@ -160,7 +177,14 @@ class SignalGridRuntime:
             return DerivativesTradingUsdsFutures(config_ws_streams=ws_cfg)
 
         def user_factory() -> Any:
-            rcfg = ConfigurationRestAPI(api_key=api_key, api_secret=api_secret, base_path=DERIVATIVES_TRADING_USDS_FUTURES_REST_API_TESTNET_URL)
+            rcfg = ConfigurationRestAPI(
+                api_key=api_key,
+                api_secret=api_secret,
+                base_path=DERIVATIVES_TRADING_USDS_FUTURES_REST_API_TESTNET_URL,
+                timeout=REST_TIMEOUT_MS,
+                retries=REST_RETRIES,
+                backoff=REST_BACKOFF_MS,
+            )
             wcfg = ConfigurationWebSocketStreams(stream_url=DERIVATIVES_TRADING_USDS_FUTURES_WS_STREAMS_TESTNET_URL)
             return DerivativesTradingUsdsFutures(config_rest_api=rcfg, config_ws_streams=wcfg)
 
