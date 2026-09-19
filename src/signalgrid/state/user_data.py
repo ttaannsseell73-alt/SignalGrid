@@ -316,17 +316,23 @@ class BinanceUserDataProcessor:
 
     @staticmethod
     def _algo_identity_conflict(existing: StoredAlgoOrder, incoming: StoredAlgoOrder) -> str | None:
-        immutable = (
+        immutable = [
             ("algo_id", existing.algo_id, incoming.algo_id),
             ("symbol", existing.symbol, incoming.symbol),
             ("side", existing.side, incoming.side),
             ("algo_type", existing.algo_type, incoming.algo_type),
             ("type", existing.order_type, incoming.order_type),
             ("trigger", existing.trigger_price, incoming.trigger_price),
-            ("qty", existing.quantity, incoming.quantity),
             ("close_position", existing.close_position, incoming.close_position),
             ("reduce_only", existing.reduce_only, incoming.reduce_only),
-        )
+        ]
+        # Binance closePosition=true means "close the entire position at trigger"
+        # and does not use a fixed order quantity. Different ALGO_UPDATE phases
+        # may therefore expose q=0 or the then-current position quantity for the
+        # same conditional order. Quantity is identity-bearing only when the
+        # algo is not a close-position order.
+        if not (existing.close_position and incoming.close_position):
+            immutable.append(("qty", existing.quantity, incoming.quantity))
         for field, left, right in immutable:
             if left != right:
                 return f"ALGO_IDENTITY_CONFLICT:{existing.client_algo_id}:{field}:{left}!={right}"
