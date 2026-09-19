@@ -45,6 +45,7 @@ jobs:
           assert rows["coin_sonar_v2"] == "ENABLED"
           assert rows["execution_mode"] == "PAPER_ONLY"
           assert rows["environment_label"] == "BINANCE_PUBLIC_PAPER"
+          assert rows["warmup_source"] == "PRELOADED_REAL_MARKET_DATA"
           assert stats["market_events"] > 0
           assert stats["evaluations"] >= 0
           print(json.dumps({"runtime": rows, "stats": stats}, indent=2, sort_keys=True))
