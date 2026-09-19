@@ -6,6 +6,11 @@ on:
       - scalping-v1
     paths:
       - ".github/workflows/scalping-quant-remote.yml"
+      - "src/signalgrid/scalping_profile.py"
+      - "src/signalgrid/sonar/**"
+      - "src/signalgrid/signals/scalping.py"
+      - "src/signalgrid/backtest/scalping_validation.py"
+      - "src/signalgrid/backtest/scalping_portfolio_cli.py"
   workflow_dispatch:
     inputs:
       symbols:
@@ -121,4 +126,4 @@ jobs:
           test -f validation/scalping_gate.json
           echo "Scalping quant gate PASS"
 
-# validation-revision: 5-cache-key-fix
+# validation-revision: 6-sonar-canonical-profile
