@@ -35,6 +35,7 @@ class BacktestConfig:
     tp_max_spacing_bps: float = 25.0
     tp_steps: float = 1.2
     min_take_profit_bps: float = 0.0
+    tp_reward_risk_multiple: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +140,12 @@ def _take_profit_price(
 ) -> float | None:
     if not cfg.take_profit_enabled:
         return None
+    if cfg.tp_reward_risk_multiple is not None:
+        if cfg.tp_reward_risk_multiple <= 0:
+            raise ValueError("tp_reward_risk_multiple must be positive")
+        # Entry occurs on the next bar open; defer RR target construction until
+        # the actual entry price is known so the target is based on real risk.
+        return None
     bars = list(state.bars)
     nv = natr(bars)
     if nv is None or nv <= 0:
@@ -162,6 +169,34 @@ def _take_profit_price(
     target_bps = max(spacing_bps * cfg.tp_steps, cfg.min_take_profit_bps)
     side = _side(signal.direction)
     return reference * (1.0 + side * target_bps / 10_000.0)
+
+
+def _entry_take_profit_price(
+    entry_price: float,
+    signal: Signal,
+    pending_target: float | None,
+    cfg: BacktestConfig,
+) -> float | None:
+    if not cfg.take_profit_enabled:
+        return None
+    if cfg.tp_reward_risk_multiple is None:
+        return pending_target
+    if cfg.tp_reward_risk_multiple <= 0:
+        raise ValueError("tp_reward_risk_multiple must be positive")
+    if signal.invalidation is None:
+        return None
+    side = _side(signal.direction)
+    if signal.direction is Direction.LONG:
+        stop_bps = (entry_price - signal.invalidation) / entry_price * 10_000.0
+    else:
+        stop_bps = (signal.invalidation - entry_price) / entry_price * 10_000.0
+    if stop_bps <= 0:
+        return None
+    target_bps = max(
+        cfg.min_take_profit_bps,
+        stop_bps * cfg.tp_reward_risk_multiple,
+    )
+    return entry_price * (1.0 + side * target_bps / 10_000.0)
 
 
 def _target_reached(row: HistoricalBar, direction: Direction, target: float | None) -> bool:
@@ -268,6 +303,7 @@ def run_backtest(
                         initial_stop_bps = max(0.0, (px - sig.invalidation) / px * 10_000.0)
                     else:
                         initial_stop_bps = max(0.0, (sig.invalidation - px) / px * 10_000.0)
+                    take_profit = _entry_take_profit_price(px, sig, take_profit, cfg)
                     position = {
                         "signal": sig, "signal_time_ms": signal_row.close_time_ms,
                         "entry_index": idx, "entry_time_ms": row.open_time_ms,
