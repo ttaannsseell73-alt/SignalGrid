@@ -9,7 +9,7 @@ from signalgrid.signals.flow import book_imbalance, spread_bps, taker_imbalance
 from signalgrid.signals.volatility import natr, volatility_expansion
 
 
-SCALPING_PROFILE_VERSION = "SCALPING_V1_20260919_R7_STOP75_TTL6"
+SCALPING_PROFILE_VERSION = "SCALPING_V1_20260919_R8_STOP75_TTL3"
 
 
 @dataclass(frozen=True, slots=True)
