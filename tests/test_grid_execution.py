@@ -46,7 +46,6 @@ def test_bounded_long_grid_has_starter_three_pullbacks_and_global_tp():
     assert plan.entries[2].price < plan.entries[1].price
     assert plan.entries[3].price < plan.entries[2].price
     assert plan.take_profit > plan.reference_price
-    assert round((plan.take_profit / plan.reference_price - 1.0) * 10_000.0, 6) == 30.0
     assert plan.invalidation < plan.reference_price
     assert 15 <= plan.spacing_bps <= 120
 
@@ -238,6 +237,7 @@ def test_single_entry_scalping_plan_has_no_resting_pullback_orders():
     assert plan.entries[0].kind == "MARKET"
     assert plan.entries[0].notional_usdt == 500.0
     assert plan.take_profit > plan.reference_price
+    assert round((plan.take_profit / plan.reference_price - 1.0) * 10_000.0, 6) == 30.0
     assert plan.invalidation < plan.reference_price
 
 
