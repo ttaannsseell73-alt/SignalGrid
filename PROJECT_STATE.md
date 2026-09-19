@@ -68,4 +68,13 @@
 6. Only after sufficient evidence -> consider very small live-capital validation.
 
 ## CURRENT GATE
-Code/CI layer is implemented. The next empirical gate is **historical dataset acquisition + real replay**. No claim of profitable edge is allowed until the cost-stressed historical gate actually passes.
+Code/CI layer is implemented. Historical acquisition is now automated with checksum verification.
+
+Canonical empirical action:
+- `RUN_SCALPING_PIPELINE_30D.cmd`
+- downloads 30 daily Binance USD-M kline + bookTicker archives,
+- runs the real no-lookahead cost-stressed replay,
+- requires at least 28 days of historical span,
+- creates the Demo unlock marker only if the quant gate actually passes.
+
+No claim of profitable edge is allowed until that real historical run passes. A 7-day dataset is smoke-only and cannot unlock Demo.
