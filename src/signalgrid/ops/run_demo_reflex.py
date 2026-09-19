@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 from signalgrid.engine import SignalGridEngine
 from signalgrid.execution.binance import client_order_id
-from signalgrid.models import Direction
+from signalgrid.models import Direction, GridMode
 from signalgrid.ops.run_soak import run_soak_session
 from signalgrid.ops.signal_diagnostics import SignalDiagnosticCounter
 from signalgrid.risk.engine import RiskConfig, RiskEngine
@@ -62,6 +62,11 @@ DEMO_SIGNAL_CONFIG = SignalConfig(
     min_flow_abs=0.05,
     min_book_abs=0.03,
     entry_threshold=0.52,
+    neutral_enabled=True,
+    neutral_max_expansion=1.00,
+    neutral_max_flow_abs=0.15,
+    neutral_max_book_abs=0.15,
+    neutral_entry_threshold=0.52,
     ttl_seconds=20.0,
 )
 
@@ -80,6 +85,10 @@ class ReflexStats:
     pass_signals_seen: int = 0
     emitted_long: int = 0
     emitted_short: int = 0
+    neutral_signals_seen: int = 0
+    emitted_neutral: int = 0
+    last_mode: dict[str, GridMode] = field(default_factory=dict)
+    mode_transitions: int = 0
     diagnostics: SignalDiagnosticCounter = field(default_factory=SignalDiagnosticCounter)
     _transition_latency_ms: deque[float] = field(default_factory=lambda: deque(maxlen=2_000))
 
@@ -87,7 +96,14 @@ class ReflexStats:
         symbol = result.symbol.upper()
         current = result.signal.direction
         self.evaluations_seen += 1
-        if current is Direction.PASS:
+        mode = getattr(result.signal, "grid_mode", None) or GridMode.PASS
+        if mode is GridMode.NEUTRAL_GRID:
+            self.neutral_signals_seen += 1
+            if result.emitted:
+                self.emitted_neutral += 1
+            elif not result.decision.approved:
+                self.diagnostics.observe(result.decision.reason)
+        elif current is Direction.PASS:
             self.pass_signals_seen += 1
             self.diagnostics.observe(getattr(result.signal, "setup", "PASS"))
         elif current is Direction.LONG:
@@ -102,6 +118,12 @@ class ReflexStats:
                 self.emitted_short += 1
             elif not result.decision.approved:
                 self.diagnostics.observe(result.decision.reason)
+
+        previous_mode = self.last_mode.get(symbol)
+        if previous_mode is not None and previous_mode is not mode:
+            self.mode_transitions += 1
+        self.last_mode[symbol] = mode
+
         previous = self.last_direction.get(symbol)
         if previous is not None and previous is not current:
             self.direction_transitions += 1
@@ -133,6 +155,9 @@ class ReflexStats:
             "pass_signals_seen": self.pass_signals_seen,
             "emitted_long": self.emitted_long,
             "emitted_short": self.emitted_short,
+            "neutral_signals_seen": self.neutral_signals_seen,
+            "emitted_neutral": self.emitted_neutral,
+            "mode_transitions": self.mode_transitions,
             "rejection_reasons": self.diagnostics.snapshot(),
             "transition_response_median_ms": median(values) if values else None,
             "transition_response_p95_ms": p95,
@@ -493,6 +518,11 @@ def main(argv: Iterable[str] | None = None) -> int:
                 "min_flow_abs": DEMO_SIGNAL_CONFIG.min_flow_abs,
                 "min_book_abs": DEMO_SIGNAL_CONFIG.min_book_abs,
                 "entry_threshold": DEMO_SIGNAL_CONFIG.entry_threshold,
+                "neutral_enabled": DEMO_SIGNAL_CONFIG.neutral_enabled,
+                "neutral_max_expansion": DEMO_SIGNAL_CONFIG.neutral_max_expansion,
+                "neutral_max_flow_abs": DEMO_SIGNAL_CONFIG.neutral_max_flow_abs,
+                "neutral_max_book_abs": DEMO_SIGNAL_CONFIG.neutral_max_book_abs,
+                "neutral_entry_threshold": DEMO_SIGNAL_CONFIG.neutral_entry_threshold,
             },
             "risk": {
                 "max_positions": DEMO_RISK.max_positions,

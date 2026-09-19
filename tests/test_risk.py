@@ -1,5 +1,5 @@
 from time import time
-from signalgrid.models import Direction, Signal
+from signalgrid.models import Direction, GridMode, Signal
 from signalgrid.risk.engine import PositionView, RiskEngine
 
 def signal(symbol="SOLUSDT"):
@@ -16,3 +16,22 @@ def test_risk_caps_positions_at_ten():
     d = RiskEngine().decide(signal(), positions)
     assert not d.approved
     assert d.reason == "MAX_POSITIONS"
+
+
+def test_risk_approves_neutral_grid_signal_without_directional_exposure():
+    now = time()
+    sig = Signal(
+        "SOLUSDT",
+        Direction.PASS,
+        0.7,
+        "RANGE",
+        "RANGE_NEUTRAL",
+        None,
+        True,
+        now + 10,
+        now,
+        GridMode.NEUTRAL_GRID,
+    )
+    d = RiskEngine().decide(sig, [])
+    assert d.approved
+    assert d.reason == "APPROVED"

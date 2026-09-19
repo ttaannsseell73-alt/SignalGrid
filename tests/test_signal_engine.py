@@ -1,5 +1,5 @@
 from signalgrid.market.state import Bar, SymbolState
-from signalgrid.models import Direction
+from signalgrid.models import Direction, GridMode
 from signalgrid.signals.engine import SignalEngine
 
 def make_state(direction: int = 1) -> SymbolState:
@@ -39,3 +39,18 @@ def test_liquidity_gate_blocks_wide_spread():
     sig = SignalEngine().evaluate(s)
     assert sig.direction is Direction.PASS
     assert sig.setup == "LIQUIDITY_GATE"
+
+
+def test_balanced_compressed_range_emits_neutral_grid():
+    s = SymbolState("RANGEUSDT")
+    for _ in range(60):
+        s.add_bar(Bar(100.0, 100.20, 99.80, 100.0, 1000))
+    s.taker_buy_quote, s.taker_sell_quote = 50, 50
+    s.bid_depth, s.ask_depth = 50, 50
+    s.best_bid, s.best_ask = 99.99, 100.01
+    sig = SignalEngine().evaluate(s)
+    assert sig.direction is Direction.PASS
+    assert sig.grid_mode is GridMode.NEUTRAL_GRID
+    assert sig.setup == "RANGE_NEUTRAL"
+    assert sig.regime == "RANGE"
+    assert sig.strength >= 0.55

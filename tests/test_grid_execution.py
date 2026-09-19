@@ -4,7 +4,7 @@ from time import time
 from signalgrid.execution.grid import GridConfig, GridPlanError, build_grid_plan
 from signalgrid.execution.paper import PaperExecutionError, PaperGridBroker
 from signalgrid.market.state import Bar, SymbolState
-from signalgrid.models import Direction, RiskDecision, Signal
+from signalgrid.models import Direction, GridMode, RiskDecision, Signal
 
 
 def state(symbol="SOLUSDT"):
@@ -146,3 +146,72 @@ def test_only_one_campaign_per_symbol_and_no_unbounded_refill():
     broker.on_state(s)
     broker.on_state(s)
     assert len(campaign.fills) == before == len(plan.entries)
+
+
+def neutral_signal(s):
+    now = time()
+    return Signal(
+        s.symbol,
+        Direction.PASS,
+        0.75,
+        "RANGE",
+        "RANGE_NEUTRAL",
+        None,
+        True,
+        now + 20,
+        now,
+        GridMode.NEUTRAL_GRID,
+    )
+
+
+def test_neutral_grid_has_symmetric_bounded_limit_ladders_and_no_market_starter():
+    s = state()
+    plan = build_grid_plan(
+        neutral_signal(s),
+        decision(),
+        s,
+        GridConfig(neutral_levels_per_side=2, neutral_stop_steps=3.0),
+    )
+    assert plan.mode is GridMode.NEUTRAL_GRID
+    assert plan.direction is Direction.PASS
+    assert len(plan.entries) == 4
+    assert all(level.kind == "LIMIT" for level in plan.entries)
+    longs = [x for x in plan.entries if x.direction is Direction.LONG]
+    shorts = [x for x in plan.entries if x.direction is Direction.SHORT]
+    assert len(longs) == len(shorts) == 2
+    assert all(x.price < plan.reference_price for x in longs)
+    assert all(x.price > plan.reference_price for x in shorts)
+    assert plan.neutral_long_invalidation < min(x.price for x in longs)
+    assert plan.neutral_short_invalidation > max(x.price for x in shorts)
+    assert plan.neutral_long_take_profit == plan.reference_price
+    assert plan.neutral_short_take_profit == plan.reference_price
+    assert round(sum(x.notional_usdt for x in plan.entries), 8) == 500.0
+
+
+def test_paper_neutral_grid_arms_without_position_then_activates_long_and_mean_reverts():
+    s = state()
+    plan = build_grid_plan(neutral_signal(s), decision(), s)
+    broker = PaperGridBroker(suppress_same_event_reopen=False)
+    campaign = broker.open_campaign(plan)
+    assert campaign.fills == []
+    assert broker.position_views() == []
+
+    first_long = min(
+        (x for x in plan.entries if x.direction is Direction.LONG),
+        key=lambda x: abs(plan.reference_price - x.price),
+    )
+    s.best_bid = first_long.price - 0.02
+    s.best_ask = first_long.price - 0.01
+    campaign = broker.on_state(s)
+    assert campaign is not None
+    assert campaign.active_direction is Direction.LONG
+    assert first_long.index in campaign.filled_indices
+    assert len(broker.position_views()) == 1
+
+    s.best_bid = plan.reference_price + 0.01
+    s.best_ask = plan.reference_price + 0.02
+    closed = broker.on_state(s)
+    assert closed is not None
+    assert closed.status == "CLOSED"
+    assert closed.close_reason == "TAKE_PROFIT"
+    assert broker.position_views() == []

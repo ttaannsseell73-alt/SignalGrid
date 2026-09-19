@@ -6,7 +6,7 @@ from typing import Callable, Iterable
 
 from signalgrid.engine import SignalGridEngine
 from signalgrid.market.binance_events import BinanceMarketEventRouter, EventResult
-from signalgrid.models import Direction, RiskDecision, Signal
+from signalgrid.models import Direction, GridMode, RiskDecision, Signal
 from signalgrid.risk.engine import PositionView
 
 PositionsProvider = Callable[[], list[PositionView]]
@@ -50,7 +50,7 @@ class MultiSymbolScanner:
         self.now_ms = now_ms or (lambda: int(time() * 1000))
         self._symbols: set[str] = set()
         self._last_eval_ms: dict[str, int] = {}
-        self._last_emit_ms: dict[tuple[str, Direction, str], int] = {}
+        self._last_emit_ms: dict[tuple[str, GridMode, str], int] = {}
 
     def configure_symbols(self, symbols: Iterable[str]) -> tuple[str, ...]:
         normalized = tuple(dict.fromkeys(s.upper().strip() for s in symbols if s.strip()))
@@ -82,8 +82,8 @@ class MultiSymbolScanner:
         compute_ms = (monotonic_ns() - started) / 1_000_000
         emitted = False
         reason = decision.reason
-        if decision.approved and signal.direction is not Direction.PASS:
-            key = (symbol, signal.direction, signal.setup)
+        if decision.approved and signal.grid_mode is not GridMode.PASS:
+            key = (symbol, signal.grid_mode, signal.setup)
             last_emit = self._last_emit_ms.get(key)
             if last_emit is not None and now_ms - last_emit < self.config.signal_debounce_ms:
                 decision = RiskDecision(False, "SIGNAL_DEBOUNCE")
