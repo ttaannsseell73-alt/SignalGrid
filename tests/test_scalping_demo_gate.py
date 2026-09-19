@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from signalgrid.ops.run_scalping_demo import _require_validation_gate
+from signalgrid.ops.run_scalping_demo import _require_validated_symbols, _require_validation_gate
 from signalgrid.signals.scalping import SCALPING_PROFILE_VERSION
 
 
@@ -51,3 +51,10 @@ def test_demo_gate_rejects_unknown_historical_scope(tmp_path, monkeypatch):
     monkeypatch.setenv("SIGNALGRID_SCALPING_GATE", str(path))
     with pytest.raises(RuntimeError, match="SCALPING_QUANT_GATE_SCOPE_INVALID"):
         _require_validation_gate()
+
+
+def test_demo_symbol_gate_blocks_unvalidated_symbols():
+    payload = {"validated_symbols": ["BTCUSDT"]}
+    _require_validated_symbols(payload, ("BTCUSDT",))
+    with pytest.raises(RuntimeError, match="SCALPING_UNVALIDATED_SYMBOLS:ETHUSDT"):
+        _require_validated_symbols(payload, ("BTCUSDT", "ETHUSDT"))
