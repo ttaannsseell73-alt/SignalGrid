@@ -99,4 +99,4 @@ jobs:
           test -f validation/scalping_gate.json
           echo "Scalping quant gate PASS"
 
-# validation-revision: 2
+# validation-revision: 3-cost-aware-tp
