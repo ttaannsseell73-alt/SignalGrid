@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         "oos_start_ms": report.oos_start_ms,
         "by_setup": [asdict(x) for x in report.by_setup],
         "by_regime": [asdict(x) for x in report.by_regime],
+        "robustness": asdict(report.robustness),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     if report.passed and args.gate_output:
@@ -78,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
                     "oos_base": asdict(report.oos_base.metrics),
                     "oos_stress": asdict(report.oos_stress.metrics),
                     "oos_start_ms": report.oos_start_ms,
+                    "robustness": asdict(report.robustness),
                 },
                 indent=2,
                 sort_keys=True,
