@@ -8,11 +8,12 @@ from typing import Iterable
 
 from signalgrid.backtest.data import load_binance_klines_csv
 from signalgrid.engine import SignalGridEngine
-from signalgrid.ops.run_scalping_demo import (
+from signalgrid.scalping_profile import (
     DEFAULT_SCALPING_SYMBOLS,
     SCALPING_GRID_CONFIG,
     SCALPING_RISK_CONFIG,
     SCALPING_SIGNAL_CONFIG,
+    SCALPING_SONAR_CONFIG,
 )
 from signalgrid.ops.run_soak import run_soak_session
 from signalgrid.risk.engine import RiskEngine
@@ -57,7 +58,7 @@ def build_scalping_paper_runtime(
         ),
         positions_provider=base.positions_provider,
         now_ms=base.now_ms,
-        impulse_radar=ImpulseRadar(),
+        impulse_radar=ImpulseRadar(SCALPING_SONAR_CONFIG),
     )
     runtime.grid_config = SCALPING_GRID_CONFIG
     runtime.store.set_runtime("strategy_profile", SCALPING_PROFILE_VERSION)
