@@ -14,7 +14,8 @@ class BinanceMarketEventRouter:
 
     def __init__(self):
         self.states: dict[str, SymbolState] = {}
-        self._kline_open_time: dict[str, int] = {}
+        self._last_closed_kline_open_time: dict[str, int] = {}
+        self._forming_kline: dict[str, tuple[int, Bar]] = {}
 
     def state(self, symbol: str) -> SymbolState:
         symbol = symbol.upper()
@@ -48,13 +49,30 @@ class BinanceMarketEventRouter:
 
         if event == "kline":
             k = data["k"]
-            bar = Bar(open=float(k["o"]), high=float(k["h"]), low=float(k["l"]), close=float(k["c"]), volume=float(k.get("v", 0.0)))
+            bar = Bar(
+                open=float(k["o"]),
+                high=float(k["h"]),
+                low=float(k["l"]),
+                close=float(k["c"]),
+                volume=float(k.get("v", 0.0)),
+            )
             open_time = int(k["t"])
-            if self._kline_open_time.get(state.symbol) == open_time and state.bars:
+            is_closed = bool(k.get("x", False))
+
+            if not is_closed:
+                # Keep the forming candle out of state.bars. Strategy/backtest
+                # parity requires structural PA to use closed bars only.
+                self._forming_kline[state.symbol] = (open_time, bar)
+                return EventResult(state.symbol, "kline_forming", False)
+
+            self._forming_kline.pop(state.symbol, None)
+            last_closed = self._last_closed_kline_open_time.get(state.symbol)
+            if last_closed == open_time and state.bars:
+                # Idempotent duplicate final-close update.
                 state.bars[-1] = bar
             else:
                 state.add_bar(bar)
-                self._kline_open_time[state.symbol] = open_time
-            return EventResult(state.symbol, "kline", True)
+                self._last_closed_kline_open_time[state.symbol] = open_time
+            return EventResult(state.symbol, "kline_closed", True)
 
         return EventResult(state.symbol, str(event or "unknown"), False)
