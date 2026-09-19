@@ -12,6 +12,7 @@ import urllib.request
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from itertools import chain
 
 
 BASE_URL = "https://data.binance.vision/data/futures/um/daily"
@@ -149,16 +150,15 @@ def _append_bookticker_sampled_zip(
                 return 0
 
             header: list[str] | None = None
-            rows = []
             if _numeric_first(first[0]):
-                rows.append(first)
+                row_iter = chain((first,), reader)
             else:
                 header = first
+                row_iter = reader
 
             time_index = _bookticker_event_index(header)
-            rows.extend(reader)
 
-            for row in rows:
+            for row in row_iter:
                 if not row or time_index >= len(row) or not _numeric_first(row[0]):
                     continue
                 try:
