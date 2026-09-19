@@ -26,6 +26,8 @@ class PublicStreamConfig:
     max_setup_backoff_seconds: float = 30.0
     rotate_after_seconds: float = 23 * 60 * 60
     receive_timeout_seconds: float = 5.0
+    public_stream_base: str = USDM_PUBLIC_STREAM_BASE
+    market_stream_base: str = USDM_MARKET_STREAM_BASE
 
     def __post_init__(self) -> None:
         if self.symbols_per_shard < 1:
@@ -123,7 +125,7 @@ class BinancePublicStreamTransport:
                             shard,
                             "public",
                             combined_stream_url(
-                                USDM_PUBLIC_STREAM_BASE,
+                                self.config.public_stream_base,
                                 public_stream_names(shard),
                             ),
                             on_event,
@@ -136,7 +138,7 @@ class BinancePublicStreamTransport:
                             shard,
                             "market",
                             combined_stream_url(
-                                USDM_MARKET_STREAM_BASE,
+                                self.config.market_stream_base,
                                 market_stream_names(shard, self.config.interval),
                             ),
                             on_event,
