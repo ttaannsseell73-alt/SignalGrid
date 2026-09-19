@@ -111,16 +111,46 @@ def _append_zip_csv(zip_path: Path, writer: csv.writer) -> int:
     return written
 
 
-def _bookticker_event_index(header: list[str] | None) -> int:
+def _bookticker_columns(header: list[str] | None) -> dict[str, int]:
     if header is None:
-        # Canonical Binance USD-M archive layout:
-        # update_id,bid_price,bid_qty,ask_price,ask_qty,transaction_time,event_time
-        return 6
+        return {
+            "update_id": 0,
+            "bid": 1,
+            "bid_qty": 2,
+            "ask": 3,
+            "ask_qty": 4,
+            "transaction_time": 5,
+            "event_time": 6,
+        }
+
     index = {name.strip().lower(): i for i, name in enumerate(header)}
-    for alias in ("event_time", "eventtime", "transaction_time", "transactiontime"):
-        if alias in index:
-            return index[alias]
-    raise RuntimeError("bookTicker archive has no event/transaction time column")
+
+    def find(*aliases: str, required: bool = True) -> int:
+        for alias in aliases:
+            if alias in index:
+                return index[alias]
+        if required:
+            raise RuntimeError(f"bookTicker archive missing columns: {aliases}")
+        return -1
+
+    event_idx = find("event_time", "eventtime", required=False)
+    transaction_idx = find("transaction_time", "transactiontime", required=False)
+    if event_idx < 0 and transaction_idx < 0:
+        raise RuntimeError("bookTicker archive has no event/transaction time column")
+    if event_idx < 0:
+        event_idx = transaction_idx
+    if transaction_idx < 0:
+        transaction_idx = event_idx
+
+    return {
+        "update_id": find("update_id", "updateid", required=False),
+        "bid": find("best_bid_price", "bid_price", "bidprice"),
+        "bid_qty": find("best_bid_qty", "bid_qty", "bidqty"),
+        "ask": find("best_ask_price", "ask_price", "askprice"),
+        "ask_qty": find("best_ask_qty", "ask_qty", "askqty"),
+        "transaction_time": transaction_idx,
+        "event_time": event_idx,
+    }
 
 
 def _append_bookticker_sampled_zip(
@@ -156,28 +186,39 @@ def _append_bookticker_sampled_zip(
                 header = first
                 row_iter = reader
 
-            time_index = _bookticker_event_index(header)
+            columns = _bookticker_columns(header)
 
             for row in row_iter:
-                if not row or time_index >= len(row) or not _numeric_first(row[0]):
+                if not row:
                     continue
                 try:
-                    event_ms = _normalize_timestamp_ms(row[time_index])
-                except (ValueError, TypeError):
+                    event_ms = _normalize_timestamp_ms(row[columns["event_time"]])
+                    transaction_ms = _normalize_timestamp_ms(row[columns["transaction_time"]])
+                    update_id = (
+                        row[columns["update_id"]]
+                        if columns["update_id"] >= 0
+                        else str(event_ms)
+                    )
+                    normalized = [
+                        update_id,
+                        row[columns["bid"]],
+                        row[columns["bid_qty"]],
+                        row[columns["ask"]],
+                        row[columns["ask_qty"]],
+                        str(transaction_ms),
+                        str(event_ms),
+                    ]
+                    # Validate numeric market fields before accepting the sample.
+                    float(normalized[1]); float(normalized[2])
+                    float(normalized[3]); float(normalized[4])
+                except (ValueError, TypeError, IndexError):
                     continue
+
                 # Bucket by the minute containing the event; the latest event in
                 # that minute is at-or-before that minute's close.
                 bucket = event_ms // bucket_ms
                 current = latest.get(bucket)
                 if current is None or event_ms > current[0]:
-                    normalized = list(row)
-                    normalized[time_index] = str(event_ms)
-                    # Canonical headerless layout also carries transaction time.
-                    if header is None and len(normalized) > 5:
-                        try:
-                            normalized[5] = str(_normalize_timestamp_ms(normalized[5]))
-                        except (ValueError, TypeError):
-                            pass
                     latest[bucket] = (event_ms, normalized)
 
     for _, row in sorted(latest.values(), key=lambda item: item[0]):
