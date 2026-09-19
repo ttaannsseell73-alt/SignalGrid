@@ -196,3 +196,42 @@ def test_non_close_position_algo_quantity_change_still_halts(tmp_path):
     assert "ALGO_IDENTITY_CONFLICT" in result.detail
     assert ":qty:1.0!=2.0" in result.detail
     assert store.halted()
+
+
+def test_algo_triggered_to_finished_is_valid_lifecycle(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    p = BinanceUserDataProcessor(store)
+
+    assert p.on_message(algo_event(status="NEW", event_time=1000)).changed
+    triggered = p.on_message(algo_event(status="TRIGGERED", event_time=1001))
+    assert triggered.changed
+    assert not store.halted()
+
+    finished = p.on_message(algo_event(status="FINISHED", event_time=1002))
+    assert finished.changed
+    assert not store.halted()
+    saved = store.get_algo_order("sg-x-stop")
+    assert saved is not None
+    assert saved.status == "FINISHED"
+
+
+def test_algo_triggered_back_to_new_still_halts(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    p = BinanceUserDataProcessor(store)
+
+    p.on_message(algo_event(status="TRIGGERED", event_time=1000))
+    result = p.on_message(algo_event(status="NEW", event_time=1001))
+
+    assert "ALGO_STATUS_REGRESSION" in result.detail
+    assert store.halted()
+
+
+def test_finished_algo_status_mutation_still_halts(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    p = BinanceUserDataProcessor(store)
+
+    p.on_message(algo_event(status="FINISHED", event_time=1000))
+    result = p.on_message(algo_event(status="TRIGGERED", event_time=1001))
+
+    assert "TERMINAL_ALGO_MUTATION" in result.detail
+    assert store.halted()
