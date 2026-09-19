@@ -69,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
                     "gate_passed": True,
                     "profile_version": SCALPING_PROFILE_VERSION,
                     "symbol": args.symbol.upper(),
+                    "validated_symbols": [args.symbol.upper()],
                     "bars": len(bars),
                     "historical_microstructure_scope": report.historical_microstructure_scope,
                     "history_span_days": report.history_span_days,
