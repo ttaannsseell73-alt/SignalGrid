@@ -1,0 +1,51 @@
+name: Scalping HF Feature Study
+
+on:
+  push:
+    branches:
+      - scalping-v1
+    paths:
+      - ".github/workflows/scalping-hf-feature-study.yml"
+  workflow_dispatch:
+
+jobs:
+  study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SYMBOL: BTCUSDT
+      DAYS: "1"
+      BUCKET_MS: "5000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Resolve cache key
+        id: cache_key
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore HF data
+        id: data_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/scalping-hf
+          key: scalping-hf-v1-${{ steps.cache_key.outputs.day }}-${{ env.SYMBOL }}-${{ env.DAYS }}-${{ env.BUCKET_MS }}
+      - name: Build HF data on cache miss
+        if: steps.data_cache.outputs.cache-hit != 'true'
+        run: |
+          python -m signalgrid.ops.download_scalping_hf             --symbol "$SYMBOL"             --days "$DAYS"             --bucket-ms "$BUCKET_MS"             --output-dir data/scalping-hf
+      - name: Run conditional feature study
+        run: |
+          mkdir -p validation
+          python -m signalgrid.backtest.scalping_hf_feature_study_cli             --symbol "$SYMBOL"             --bars "data/scalping-hf/${SYMBOL}-${BUCKET_MS}ms.csv"             --lookback 24             --horizon-bars 12             --min-samples 30             --output validation/scalping_hf_feature_study.json
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: scalping-hf-feature-study
+          path: validation/scalping_hf_feature_study.json
+          retention-days: 30
