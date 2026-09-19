@@ -21,11 +21,5 @@ def test_scalping_execution_is_bounded_not_infinite_grid():
     assert SCALPING_RISK_CONFIG.leverage == 3
 
 
-def test_scalping_default_universe_is_small_and_liquid_focused():
-    assert DEFAULT_SCALPING_SYMBOLS == (
-        "BTCUSDT",
-        "ETHUSDT",
-        "SOLUSDT",
-        "BNBUSDT",
-        "XRPUSDT",
-    )
+def test_scalping_default_universe_is_historically_gated():
+    assert DEFAULT_SCALPING_SYMBOLS == ("BTCUSDT",)
