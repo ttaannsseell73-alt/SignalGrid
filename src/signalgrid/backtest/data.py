@@ -12,6 +12,13 @@ class HistoricalDataError(ValueError):
     pass
 
 
+def normalize_timestamp_ms(value: str | int | float) -> int:
+    ts = int(float(value))
+    if ts > 100_000_000_000_000:
+        ts //= 1_000
+    return ts
+
+
 @dataclass(frozen=True, slots=True)
 class HistoricalBar:
     symbol: str
@@ -128,8 +135,8 @@ def load_binance_klines_csv(path: str | Path, symbol: str) -> list[HistoricalBar
         try:
             out.append(HistoricalBar(
                 symbol=symbol.upper(),
-                open_time_ms=int(float(raw[required["open_time"]])),
-                close_time_ms=int(float(raw[required["close_time"]])),
+                open_time_ms=normalize_timestamp_ms(raw[required["open_time"]]),
+                close_time_ms=normalize_timestamp_ms(raw[required["close_time"]]),
                 open=float(raw[required["open"]]), high=float(raw[required["high"]]),
                 low=float(raw[required["low"]]), close=float(raw[required["close"]]),
                 volume=float(raw[required["volume"]]),
@@ -221,7 +228,7 @@ def load_book_ticker_csv(path: str | Path, symbol: str) -> list[BookSnapshot]:
         try:
             out.append(BookSnapshot(
                 symbol=symbol.upper(),
-                timestamp_ms=int(float(raw[cols["event_time"]])),
+                timestamp_ms=normalize_timestamp_ms(raw[cols["event_time"]]),
                 best_bid=float(raw[cols["bid"]]),
                 best_ask=float(raw[cols["ask"]]),
                 bid_depth=float(raw[cols["bid_qty"]]),
@@ -253,7 +260,7 @@ def load_funding_rate_csv(path: str | Path, symbol: str) -> list[FundingPoint]:
         if not raw:
             continue
         try:
-            out.append(FundingPoint(symbol.upper(), int(float(raw[ti])), float(raw[ri])))
+            out.append(FundingPoint(symbol.upper(), normalize_timestamp_ms(raw[ti]), float(raw[ri])))
         except (ValueError, IndexError) as exc:
             raise HistoricalDataError(f"invalid fundingRate row: {raw[:3]}") from exc
     out.sort(key=lambda x: x.timestamp_ms)
