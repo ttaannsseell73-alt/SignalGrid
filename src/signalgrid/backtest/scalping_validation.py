@@ -7,6 +7,8 @@ from typing import Sequence
 from signalgrid.backtest.data import FundingPoint, HistoricalBar
 from signalgrid.backtest.engine import BacktestConfig, BacktestResult, run_backtest
 from signalgrid.signals.scalping import ScalpingConfig, ScalpingSignalEngine
+from signalgrid.sonar.gate import SonarGatedSignalEngine
+from signalgrid.sonar.impulse_radar import ImpulseRadar, ImpulseRadarConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +65,27 @@ class ScalpingValidationReport:
     robustness: RobustnessMetrics
     passed: bool
     reasons: tuple[str, ...]
+
+
+def historical_sonar_config() -> ImpulseRadarConfig:
+    """Historical Coin Sonar using only fields present in Binance kline archives.
+
+    Spread/book liquidity is intentionally unavailable and not synthesized.
+    Turnover is interpreted as one completed kline bucket per evaluation.
+    """
+    return ImpulseRadarConfig(
+        turnover_mode="BUCKET_TOTAL",
+        require_spread=False,
+    )
+
+
+def historical_scalping_engine(
+    signal_config: ScalpingConfig,
+) -> SonarGatedSignalEngine:
+    return SonarGatedSignalEngine(
+        ScalpingSignalEngine(signal_config),
+        ImpulseRadar(historical_sonar_config()),
+    )
 
 
 def _slice_metrics(trades, attr: str) -> tuple[SliceMetrics, ...]:
@@ -136,7 +159,7 @@ def _robustness_metrics(
             robustness_rows,
             backtest_config=backtest_config,
             funding_points=funding_points,
-            engine=ScalpingSignalEngine(candidate),
+            engine=historical_scalping_engine(candidate),
             trade_start_ms=trade_start_ms,
         )
         expectations.append(result.metrics.expectancy)
@@ -173,9 +196,10 @@ def run_scalping_validation(
 
     This does not certify profitability. It only prevents Demo progression when
     the supplied historical sample does not meet explicit minimum evidence.
-    Historical Binance USD-M validation uses only features present in current
-    public archives: closed-bar price action plus kline taker-flow. Book/spread
-    microstructure is explicitly unavailable here and is validated forward in Demo.
+    Historical Binance USD-M validation runs the locked Coin Sonar -> Signal Hub
+    ordering using only fields present in kline archives: closed-bar price action
+    plus quote turnover/taker-flow. Historical spread/book data is unavailable and
+    is explicitly not synthesized; those gates are validated forward before Demo.
     """
 
     sig_cfg = signal_config or ScalpingConfig()
@@ -222,13 +246,13 @@ def run_scalping_validation(
         rows,
         backtest_config=base_cfg,
         funding_points=funding_points,
-        engine=ScalpingSignalEngine(historical_sig_cfg),
+        engine=historical_scalping_engine(historical_sig_cfg),
     )
     stress = run_backtest(
         rows,
         backtest_config=stress_cfg,
         funding_points=funding_points,
-        engine=ScalpingSignalEngine(historical_sig_cfg),
+        engine=historical_scalping_engine(historical_sig_cfg),
     )
 
     ordered_rows = sorted(rows, key=lambda r: r.open_time_ms)
@@ -241,14 +265,14 @@ def run_scalping_validation(
         rows,
         backtest_config=base_cfg,
         funding_points=funding_points,
-        engine=ScalpingSignalEngine(historical_sig_cfg),
+        engine=historical_scalping_engine(historical_sig_cfg),
         trade_start_ms=oos_start_ms,
     )
     oos_stress = run_backtest(
         rows,
         backtest_config=stress_cfg,
         funding_points=funding_points,
-        engine=ScalpingSignalEngine(historical_sig_cfg),
+        engine=historical_scalping_engine(historical_sig_cfg),
         trade_start_ms=oos_start_ms,
     )
 
@@ -330,7 +354,7 @@ def run_scalping_validation(
         by_exit_reason=_slice_metrics(base.trades, "exit_reason"),
         history_span_days=history_span_days,
         oos_start_ms=oos_start_ms,
-        historical_microstructure_scope="PRICE_ACTION_TAKER_ONLY",
+        historical_microstructure_scope="SONAR_PRICE_TAKER_NO_BOOK",
         robustness=robustness,
         passed=not reasons,
         reasons=tuple(reasons),
