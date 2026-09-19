@@ -20,6 +20,7 @@ from signalgrid.ops.run_soak import run_soak_session
 from signalgrid.risk.engine import RiskConfig, RiskEngine
 from signalgrid.runtime import RuntimeConfig, RuntimeMode, SignalGridRuntime
 from signalgrid.scanner import MultiSymbolScanner, ScannerConfig
+from signalgrid.sonar.impulse_radar import ImpulseRadar
 from signalgrid.signals.scalping import (
     SCALPING_PROFILE_VERSION,
     ScalpingConfig,
@@ -150,6 +151,7 @@ def build_scalping_demo_runtime(
         ),
         positions_provider=base.positions_provider,
         now_ms=base.now_ms,
+        impulse_radar=ImpulseRadar(),
     )
     runtime.grid_config = SCALPING_GRID_CONFIG
 
