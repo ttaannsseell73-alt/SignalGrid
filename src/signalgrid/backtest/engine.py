@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import inf
 from statistics import median
-from typing import Iterable, Sequence
+from typing import Iterable, Protocol, Sequence
 
 from signalgrid.backtest.data import FundingPoint, HistoricalBar
 from signalgrid.market.state import SymbolState
@@ -13,6 +13,10 @@ from signalgrid.signals.engine import SignalConfig, SignalEngine
 
 class BacktestDataQualityError(ValueError):
     pass
+
+
+class SignalEvaluator(Protocol):
+    def evaluate(self, state: SymbolState) -> Signal: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +47,8 @@ class SimulatedTrade:
     net_pnl: float
     exit_reason: str
     holding_bars: int
+    mae_usdt: float = 0.0
+    mfe_usdt: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +66,9 @@ class BacktestMetrics:
     max_drawdown_pct: float
     turnover_usdt: float
     cost_share_of_abs_gross: float
+    avg_holding_bars: float = 0.0
+    avg_mae_usdt: float = 0.0
+    avg_mfe_usdt: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +151,9 @@ def metrics_from_trades(trades: Sequence[SimulatedTrade], starting_equity: float
         max_drawdown_pct=max_dd,
         turnover_usdt=turnover,
         cost_share_of_abs_gross=abs(costs) / max(abs(gross_pnl), 1e-12),
+        avg_holding_bars=sum(t.holding_bars for t in trades) / len(trades) if trades else 0.0,
+        avg_mae_usdt=sum(t.mae_usdt for t in trades) / len(trades) if trades else 0.0,
+        avg_mfe_usdt=sum(t.mfe_usdt for t in trades) / len(trades) if trades else 0.0,
     )
 
 
@@ -151,7 +163,7 @@ def run_backtest(
     signal_config: SignalConfig | None = None,
     backtest_config: BacktestConfig | None = None,
     funding_points: Sequence[FundingPoint] = (),
-    engine: SignalEngine | None = None,
+    engine: SignalEvaluator | None = None,
     trade_start_ms: int | None = None,
     trade_end_ms: int | None = None,
 ) -> BacktestResult:
@@ -195,6 +207,7 @@ def run_backtest(
                         "signal": sig, "signal_time_ms": signal_row.close_time_ms,
                         "entry_index": idx, "entry_time_ms": row.open_time_ms,
                         "entry_price": px, "qty": qty,
+                        "mae_usdt": 0.0, "mfe_usdt": 0.0,
                     }
 
         # 2) Existing position sees this bar only after it has opened.
@@ -202,6 +215,16 @@ def run_backtest(
             sig = position["signal"]
             assert isinstance(sig, Signal)
             entry_idx = int(position["entry_index"])
+            entry_price_for_excursion = float(position["entry_price"])
+            qty_for_excursion = float(position["qty"])
+            if sig.direction is Direction.LONG:
+                favorable = max(0.0, (row.high - entry_price_for_excursion) * qty_for_excursion)
+                adverse = max(0.0, (entry_price_for_excursion - row.low) * qty_for_excursion)
+            else:
+                favorable = max(0.0, (entry_price_for_excursion - row.low) * qty_for_excursion)
+                adverse = max(0.0, (row.high - entry_price_for_excursion) * qty_for_excursion)
+            position["mfe_usdt"] = max(float(position["mfe_usdt"]), favorable)
+            position["mae_usdt"] = max(float(position["mae_usdt"]), adverse)
             exit_reason: str | None = None
             exit_base: float | None = None
             if _stop_hit(row, sig.direction, sig.invalidation):
@@ -229,6 +252,8 @@ def run_backtest(
                     gross_pnl=gross, fees=fees, funding_cost=funding,
                     net_pnl=gross - fees - funding, exit_reason=exit_reason,
                     holding_bars=idx - entry_idx + 1,
+                    mae_usdt=float(position["mae_usdt"]),
+                    mfe_usdt=float(position["mfe_usdt"]),
                 ))
                 position = None
 
@@ -263,6 +288,8 @@ def run_backtest(
             entry_price=entry_price, exit_price=exit_price, quantity=qty,
             gross_pnl=gross, fees=fees, funding_cost=funding, net_pnl=gross-fees-funding,
             exit_reason="DATA_END", holding_bars=len(ordered)-int(position["entry_index"]),
+            mae_usdt=float(position["mae_usdt"]),
+            mfe_usdt=float(position["mfe_usdt"]),
         ))
 
     return BacktestResult(symbol, tuple(trades), metrics_from_trades(trades, cfg.starting_equity), skipped)
