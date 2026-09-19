@@ -89,6 +89,8 @@ def _require_validation_gate() -> dict:
         raise RuntimeError("SCALPING_QUANT_GATE_FAILED")
     if payload.get("profile_version") != SCALPING_PROFILE_VERSION:
         raise RuntimeError("SCALPING_QUANT_GATE_STALE_PROFILE")
+    if payload.get("historical_microstructure_scope") != "PRICE_ACTION_TAKER_ONLY":
+        raise RuntimeError("SCALPING_QUANT_GATE_SCOPE_INVALID")
     return payload
 
 
