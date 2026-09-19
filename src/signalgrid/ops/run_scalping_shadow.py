@@ -270,81 +270,161 @@ async def record_shadow(
 ) -> dict[str, Any]:
     if duration_seconds <= 0:
         raise ValueError("duration_seconds must be positive")
+
     store = ShadowStore(db_path)
     acc = {symbol: ShadowAccumulator(symbol) for symbol in symbols}
-    subscriptions = subscription_names(symbols)
-    started = time.monotonic()
+    deadline = time.monotonic() + duration_seconds
     messages = 0
     event_counts: dict[str, int] = {}
     stream_counts: dict[str, int] = {}
+    last_agg_id: dict[str, int] = {}
+
+    def handle(data: dict[str, Any], stream_name: str) -> None:
+        nonlocal messages
+        symbol = str(data.get("s", "")).upper()
+        if symbol not in acc:
+            return
+        event = str(data.get("e") or "unknown")
+
+        if event == "aggTrade":
+            agg_id = int(data.get("a", -1))
+            if agg_id >= 0 and last_agg_id.get(symbol) == agg_id:
+                return
+            if agg_id >= 0:
+                last_agg_id[symbol] = agg_id
+
+        event_counts[event] = event_counts.get(event, 0) + 1
+        stream_counts[stream_name] = stream_counts.get(stream_name, 0) + 1
+        event_ms = int(data.get("E") or data.get("T") or int(time.time() * 1000))
+        row = None
+
+        if event == "aggTrade":
+            row = acc[symbol].on_agg_trade(
+                event_ms=event_ms,
+                price=float(data["p"]),
+                qty=float(data["q"]),
+                buyer_is_maker=bool(data.get("m", False)),
+            )
+        elif event == "bookTicker" or (
+            "b" in data and "a" in data and "B" in data and "A" in data
+        ):
+            row = acc[symbol].on_book_ticker(
+                event_ms=event_ms,
+                bid=float(data["b"]),
+                bid_qty=float(data["B"]),
+                ask=float(data["a"]),
+                ask_qty=float(data["A"]),
+            )
+        elif event == "depthUpdate" or "bids" in data or "asks" in data:
+            bids = data.get("b") or data.get("bids") or []
+            asks = data.get("a") or data.get("asks") or []
+            row = acc[symbol].on_depth(
+                event_ms=event_ms,
+                bids=bids,
+                asks=asks,
+            )
+
+        store.write(row)
+        messages += 1
+        if messages % 1000 == 0:
+            store.commit()
+
+    async def market_loop() -> None:
+        params = [
+            name
+            for name in subscription_names(symbols)
+            if not name.endswith("@aggTrade")
+        ]
+        failures = 0
+        while time.monotonic() < deadline:
+            try:
+                async with websockets.connect(
+                    FSTREAM_BASE,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    close_timeout=10,
+                    max_size=4 * 1024 * 1024,
+                ) as ws:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "method": "SUBSCRIBE",
+                                "params": params,
+                                "id": 1,
+                            }
+                        )
+                    )
+                    failures = 0
+                    while time.monotonic() < deadline:
+                        remaining = deadline - time.monotonic()
+                        try:
+                            raw = await asyncio.wait_for(
+                                ws.recv(),
+                                timeout=min(30.0, remaining),
+                            )
+                        except asyncio.TimeoutError:
+                            continue
+                        payload = json.loads(raw)
+                        if payload.get("id") == 1 and "result" in payload:
+                            continue
+                        data = payload.get("data", payload)
+                        symbol = str(data.get("s", "")).upper()
+                        event = str(data.get("e") or "unknown")
+                        if symbol in acc:
+                            handle(
+                                data,
+                                _stream_name_for_event(symbol, event),
+                            )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                failures += 1
+                await asyncio.sleep(min(5.0, 0.25 * (2 ** min(failures, 4))))
+
+    async def trade_loop(symbol: str) -> None:
+        # Keep aggTrade on a dedicated raw connection. This isolates trade flow
+        # from high-volume book/depth traffic and avoids one stream being starved
+        # or silently omitted by a multiplexed connection.
+        lower = symbol.lower()
+        url = f"wss://fstream.binance.com/ws/{lower}@aggTrade"
+        failures = 0
+        while time.monotonic() < deadline:
+            try:
+                async with websockets.connect(
+                    url,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    close_timeout=10,
+                    max_size=2 * 1024 * 1024,
+                ) as ws:
+                    failures = 0
+                    while time.monotonic() < deadline:
+                        remaining = deadline - time.monotonic()
+                        try:
+                            raw = await asyncio.wait_for(
+                                ws.recv(),
+                                timeout=min(30.0, remaining),
+                            )
+                        except asyncio.TimeoutError:
+                            continue
+                        data = json.loads(raw)
+                        handle(data, f"{lower}@aggTrade")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                failures += 1
+                await asyncio.sleep(min(5.0, 0.25 * (2 ** min(failures, 4))))
+
+    tasks = [
+        asyncio.create_task(market_loop(), name="shadow-market"),
+        *[
+            asyncio.create_task(trade_loop(symbol), name=f"shadow-trades-{symbol}")
+            for symbol in symbols
+        ],
+    ]
 
     try:
-        async with websockets.connect(
-            FSTREAM_BASE,
-            ping_interval=20,
-            ping_timeout=20,
-            close_timeout=10,
-            max_size=4 * 1024 * 1024,
-        ) as ws:
-            await ws.send(
-                json.dumps(
-                    {
-                        "method": "SUBSCRIBE",
-                        "params": subscriptions,
-                        "id": 1,
-                    }
-                )
-            )
-            while time.monotonic() - started < duration_seconds:
-                remaining = duration_seconds - (time.monotonic() - started)
-                if remaining <= 0:
-                    break
-                try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=min(30.0, remaining))
-                except asyncio.TimeoutError:
-                    continue
-                payload = json.loads(raw)
-                # Subscription acknowledgements have no symbol/event payload.
-                if payload.get("id") == 1 and "result" in payload:
-                    continue
-                data = payload.get("data", payload)
-                symbol = str(data.get("s", "")).upper()
-                if symbol not in acc:
-                    continue
-                event = str(data.get("e") or "unknown")
-                event_counts[event] = event_counts.get(event, 0) + 1
-                stream_name = _stream_name_for_event(symbol, event)
-                stream_counts[stream_name] = stream_counts.get(stream_name, 0) + 1
-                event_ms = int(data.get("E") or data.get("T") or int(time.time() * 1000))
-                row = None
-                if event == "aggTrade":
-                    row = acc[symbol].on_agg_trade(
-                        event_ms=event_ms,
-                        price=float(data["p"]),
-                        qty=float(data["q"]),
-                        buyer_is_maker=bool(data.get("m", False)),
-                    )
-                elif event == "bookTicker" or ("b" in data and "a" in data and "B" in data and "A" in data):
-                    row = acc[symbol].on_book_ticker(
-                        event_ms=event_ms,
-                        bid=float(data["b"]),
-                        bid_qty=float(data["B"]),
-                        ask=float(data["a"]),
-                        ask_qty=float(data["A"]),
-                    )
-                elif event == "depthUpdate" or "bids" in data or "asks" in data:
-                    bids = data.get("b") or data.get("bids") or []
-                    asks = data.get("a") or data.get("asks") or []
-                    row = acc[symbol].on_depth(
-                        event_ms=event_ms,
-                        bids=bids,
-                        asks=asks,
-                    )
-                store.write(row)
-                messages += 1
-                if messages % 1000 == 0:
-                    store.commit()
-
+        await asyncio.gather(*tasks)
         for item in acc.values():
             store.write(item.snapshot())
         store.commit()
@@ -358,6 +438,10 @@ async def record_shadow(
             "db_path": str(db_path),
         }
     finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         store.close()
 
 
