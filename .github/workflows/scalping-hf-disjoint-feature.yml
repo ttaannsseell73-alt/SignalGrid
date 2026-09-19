@@ -1,0 +1,67 @@
+name: Scalping HF Disjoint Feature
+
+on:
+  push:
+    branches:
+      - scalping-v1
+    paths:
+      - ".github/workflows/scalping-hf-disjoint-feature.yml"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SYMBOL: BTCUSDT
+      DAYS: "7"
+      END_DATE: "2026-09-17"
+      BUCKET_MS: "5000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Build disjoint 5s dataset
+        run: |
+          python -m signalgrid.ops.download_scalping_hf \
+            --symbol "$SYMBOL" \
+            --days "$DAYS" \
+            --end-date "$END_DATE" \
+            --bucket-ms "$BUCKET_MS" \
+            --output-dir data/scalping-hf-disjoint
+      - name: Validate frozen feature
+        id: gate
+        shell: bash
+        run: |
+          mkdir -p validation
+          set +e
+          python -m signalgrid.backtest.scalping_hf_disjoint_feature_cli \
+            --symbol "$SYMBOL" \
+            --bars "data/scalping-hf-disjoint/${SYMBOL}-${BUCKET_MS}ms.csv" \
+            --min-samples 100 \
+            --output validation/scalping_hf_disjoint_feature.json
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scalping-hf-disjoint-feature
+          path: validation/scalping_hf_disjoint_feature.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Enforce research gate
+        run: |
+          code="${{ steps.gate.outputs.exit_code }}"
+          if [ "$code" != "0" ]; then
+            echo "Frozen HF feature rejected by disjoint period."
+            exit "$code"
+          fi
+          echo "Frozen HF feature passed disjoint period."
