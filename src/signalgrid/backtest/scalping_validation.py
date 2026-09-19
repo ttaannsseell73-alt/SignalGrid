@@ -55,6 +55,7 @@ class ScalpingValidationReport:
     oos_stress: BacktestResult
     by_setup: tuple[SliceMetrics, ...]
     by_regime: tuple[SliceMetrics, ...]
+    by_exit_reason: tuple[SliceMetrics, ...]
     history_span_days: float
     oos_start_ms: int | None
     historical_microstructure_scope: str
@@ -324,6 +325,7 @@ def run_scalping_validation(
         oos_stress=oos_stress,
         by_setup=_slice_metrics(base.trades, "setup"),
         by_regime=_slice_metrics(base.trades, "regime"),
+        by_exit_reason=_slice_metrics(base.trades, "exit_reason"),
         history_span_days=history_span_days,
         oos_start_ms=oos_start_ms,
         historical_microstructure_scope="PRICE_ACTION_TAKER_ONLY",
