@@ -18,6 +18,11 @@ class ScalpingValidationGate:
     max_base_drawdown_pct: float = 0.15
     max_base_cost_share: float = 0.70
     min_history_days: float = 28.0
+    oos_fraction: float = 0.30
+    min_oos_trades: int = 15
+    min_oos_expectancy_usdt: float = 0.0
+    min_oos_stress_expectancy_usdt: float = 0.0
+    min_oos_profit_factor: float = 1.00
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,9 +40,12 @@ class SliceMetrics:
 class ScalpingValidationReport:
     base: BacktestResult
     stress: BacktestResult
+    oos_base: BacktestResult
+    oos_stress: BacktestResult
     by_setup: tuple[SliceMetrics, ...]
     by_regime: tuple[SliceMetrics, ...]
     history_span_days: float
+    oos_start_ms: int | None
     passed: bool
     reasons: tuple[str, ...]
 
@@ -83,6 +91,8 @@ def run_scalping_validation(
 
     sig_cfg = signal_config or ScalpingConfig()
     gate_cfg = gate or ScalpingValidationGate()
+    if not 0.10 <= gate_cfg.oos_fraction <= 0.50:
+        raise ValueError("oos_fraction must be between 0.10 and 0.50")
 
     base_cfg = BacktestConfig(
         starting_equity=10_000.0,
@@ -116,6 +126,27 @@ def run_scalping_validation(
         engine=ScalpingSignalEngine(sig_cfg),
     )
 
+    ordered_rows = sorted(rows, key=lambda r: r.open_time_ms)
+    oos_start_ms: int | None = None
+    if ordered_rows:
+        split_index = max(1, min(len(ordered_rows) - 1, int(len(ordered_rows) * (1.0 - gate_cfg.oos_fraction))))
+        oos_start_ms = ordered_rows[split_index].open_time_ms
+
+    oos_base = run_backtest(
+        rows,
+        backtest_config=base_cfg,
+        funding_points=funding_points,
+        engine=ScalpingSignalEngine(sig_cfg),
+        trade_start_ms=oos_start_ms,
+    )
+    oos_stress = run_backtest(
+        rows,
+        backtest_config=stress_cfg,
+        funding_points=funding_points,
+        engine=ScalpingSignalEngine(sig_cfg),
+        trade_start_ms=oos_start_ms,
+    )
+
     reasons: list[str] = []
     history_span_days = 0.0
     if rows:
@@ -131,6 +162,8 @@ def run_scalping_validation(
 
     bm = base.metrics
     sm = stress.metrics
+    om = oos_base.metrics
+    osm = oos_stress.metrics
 
     if bm.trades < gate_cfg.min_trades:
         reasons.append(f"INSUFFICIENT_TRADES:{bm.trades}<{gate_cfg.min_trades}")
@@ -154,13 +187,30 @@ def run_scalping_validation(
         reasons.append(
             f"BASE_COST_SHARE:{bm.cost_share_of_abs_gross:.6f}>{gate_cfg.max_base_cost_share:.6f}"
         )
+    if om.trades < gate_cfg.min_oos_trades:
+        reasons.append(f"OOS_INSUFFICIENT_TRADES:{om.trades}<{gate_cfg.min_oos_trades}")
+    if om.expectancy <= gate_cfg.min_oos_expectancy_usdt:
+        reasons.append(
+            f"OOS_EXPECTANCY:{om.expectancy:.6f}<={gate_cfg.min_oos_expectancy_usdt:.6f}"
+        )
+    if osm.expectancy <= gate_cfg.min_oos_stress_expectancy_usdt:
+        reasons.append(
+            f"OOS_STRESS_EXPECTANCY:{osm.expectancy:.6f}<={gate_cfg.min_oos_stress_expectancy_usdt:.6f}"
+        )
+    if om.profit_factor < gate_cfg.min_oos_profit_factor:
+        reasons.append(
+            f"OOS_PROFIT_FACTOR:{om.profit_factor:.6f}<{gate_cfg.min_oos_profit_factor:.6f}"
+        )
 
     return ScalpingValidationReport(
         base=base,
         stress=stress,
+        oos_base=oos_base,
+        oos_stress=oos_stress,
         by_setup=_slice_metrics(base.trades, "setup"),
         by_regime=_slice_metrics(base.trades, "regime"),
         history_span_days=history_span_days,
+        oos_start_ms=oos_start_ms,
         passed=not reasons,
         reasons=tuple(reasons),
     )
