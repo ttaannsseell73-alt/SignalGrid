@@ -8,6 +8,7 @@ from signalgrid.engine import SignalGridEngine
 from signalgrid.market.binance_events import BinanceMarketEventRouter, EventResult
 from signalgrid.models import Direction, GridMode, RiskDecision, Signal
 from signalgrid.risk.engine import PositionView
+from signalgrid.sonar.impulse_radar import ImpulseRadar, ImpulseRadarEvent
 
 PositionsProvider = Callable[[], list[PositionView]]
 ClockMs = Callable[[], int]
@@ -42,12 +43,22 @@ class ScanResult:
 class MultiSymbolScanner:
     """Event-driven scanner only; no order placement is allowed here."""
 
-    def __init__(self, router: BinanceMarketEventRouter, engine: SignalGridEngine | None = None, config: ScannerConfig | None = None, positions_provider: PositionsProvider | None = None, now_ms: ClockMs | None = None) -> None:
+    def __init__(
+        self,
+        router: BinanceMarketEventRouter,
+        engine: SignalGridEngine | None = None,
+        config: ScannerConfig | None = None,
+        positions_provider: PositionsProvider | None = None,
+        now_ms: ClockMs | None = None,
+        impulse_radar: ImpulseRadar | None = None,
+    ) -> None:
         self.router = router
         self.engine = engine or SignalGridEngine()
         self.config = config or ScannerConfig()
         self.positions_provider = positions_provider or (lambda: [])
         self.now_ms = now_ms or (lambda: int(time() * 1000))
+        self.impulse_radar = impulse_radar
+        self.last_impulse_event: dict[str, ImpulseRadarEvent] = {}
         self._symbols: set[str] = set()
         self._last_eval_ms: dict[str, int] = {}
         self._last_emit_ms: dict[tuple[str, GridMode, str], int] = {}
@@ -77,6 +88,11 @@ class MultiSymbolScanner:
         event_age = max(0, now_ms - source_ms)
         if event_age > self.config.max_market_data_age_ms:
             return self._pass_result(symbol, "STALE_MARKET_DATA", event_age)
+        if self.impulse_radar is not None:
+            wake = self.impulse_radar.observe(state, now_ms)
+            if wake is None:
+                return self._pass_result(symbol, "IMPULSE_RADAR_SLEEP", event_age)
+            self.last_impulse_event[symbol] = wake
         started = monotonic_ns()
         signal, decision = self.engine.evaluate_symbol(state, self.positions_provider())
         compute_ms = (monotonic_ns() - started) / 1_000_000
