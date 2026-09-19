@@ -20,6 +20,7 @@ Locked constraints:
 - Signal core remains volatility + structure + flow + liquidity gate.
 - No new signal family without OOS evidence replacing, not stacking on, an existing feature.
 - One-way position mode only; hedge-mode state fails closed.
+- Margin mode LOCKED: SignalGrid V1 uses ISOLATED margin only. CROSS is forbidden. Preflight/runtime must verify or set ISOLATED before opening exposure; if this cannot be confirmed, fail closed. Auto-add-margin must remain disabled. Each symbol/campaign must not consume margin from unrelated positions.
 - New entries require an open State/Ops execution gate.
 - Bounded directional grid only: default 4 entries, 40% starter MARKET, finite pullback LIMITs, NATR-bounded spacing, global STOP + global TP.
 - No martingale, unbounded averaging, refill or infinite grid.
