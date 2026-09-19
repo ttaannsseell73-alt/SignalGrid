@@ -98,3 +98,5 @@ jobs:
           fi
           test -f validation/scalping_gate.json
           echo "Scalping quant gate PASS"
+
+# validation-revision: 2
