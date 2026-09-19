@@ -88,11 +88,10 @@ def _require_validation_gate() -> dict:
     return payload
 
 
-def build_scalping_demo_runtime(
+def _require_validated_symbols(
+    gate_payload: dict,
     symbols: tuple[str, ...],
-    db_path: str,
-) -> SignalGridRuntime:
-    gate_payload = _require_validation_gate()
+) -> None:
     validated_symbols = {
         str(symbol).upper()
         for symbol in gate_payload.get("validated_symbols", [])
@@ -104,6 +103,14 @@ def build_scalping_demo_runtime(
         raise RuntimeError(
             "SCALPING_UNVALIDATED_SYMBOLS:" + ",".join(unvalidated)
         )
+
+
+def build_scalping_demo_runtime(
+    symbols: tuple[str, ...],
+    db_path: str,
+) -> SignalGridRuntime:
+    gate_payload = _require_validation_gate()
+    _require_validated_symbols(gate_payload, symbols)
 
     api_key = os.getenv("BINANCE_DEMO_API_KEY", "").strip()
     api_secret = os.getenv("BINANCE_DEMO_API_SECRET", "").strip()
