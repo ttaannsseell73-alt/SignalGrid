@@ -290,6 +290,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--days", type=int, default=7)
     p.add_argument("--end-date", help="UTC YYYY-MM-DD; default is yesterday")
     p.add_argument("--output-dir", default="data/scalping")
+    p.add_argument(
+        "--include-bookticker",
+        action="store_true",
+        help="Legacy/diagnostic only; current USD-M bookTicker archives may be unavailable",
+    )
     args = p.parse_args(argv)
 
     if args.days < 1 or args.days > 90:
@@ -319,13 +324,24 @@ def main(argv: list[str] | None = None) -> int:
         output_csv=kline_path,
         interval="1m",
     )
-    b_archives, b_rows = download_dataset(
-        dataset="bookTicker",
-        symbol=symbol,
-        start=start,
-        end=end,
-        output_csv=book_path,
-    )
+    book_result: dict[str, object] = {
+        "status": "NOT_REQUESTED",
+        "reason": "current historical gate uses supported kline price-action+taker-flow only",
+    }
+    if args.include_bookticker:
+        b_archives, b_rows = download_dataset(
+            dataset="bookTicker",
+            symbol=symbol,
+            start=start,
+            end=end,
+            output_csv=book_path,
+        )
+        book_result = {
+            "status": "DOWNLOADED",
+            "archives": b_archives,
+            "rows": b_rows,
+            "path": str(book_path),
+        }
 
     print(
         {
@@ -333,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
             "start": start.isoformat(),
             "end": end.isoformat(),
             "klines": {"archives": k_archives, "rows": k_rows, "path": str(kline_path)},
-            "bookTicker": {"archives": b_archives, "rows": b_rows, "path": str(book_path)},
+            "bookTicker": book_result,
         },
         flush=True,
     )
