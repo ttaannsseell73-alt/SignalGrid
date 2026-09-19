@@ -57,6 +57,7 @@ class SimulatedTrade:
     mae_usdt: float = 0.0
     mfe_usdt: float = 0.0
     regime: str = ""
+    initial_stop_bps: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,7 @@ class BacktestMetrics:
     avg_holding_bars: float = 0.0
     avg_mae_usdt: float = 0.0
     avg_mfe_usdt: float = 0.0
+    avg_initial_stop_bps: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +209,7 @@ def metrics_from_trades(trades: Sequence[SimulatedTrade], starting_equity: float
         avg_holding_bars=sum(t.holding_bars for t in trades) / len(trades) if trades else 0.0,
         avg_mae_usdt=sum(t.mae_usdt for t in trades) / len(trades) if trades else 0.0,
         avg_mfe_usdt=sum(t.mfe_usdt for t in trades) / len(trades) if trades else 0.0,
+        avg_initial_stop_bps=sum(t.initial_stop_bps for t in trades) / len(trades) if trades else 0.0,
     )
 
 
@@ -259,11 +262,18 @@ def run_backtest(
                 else:
                     px = _entry_price(row.open, sig.direction, cfg)
                     qty = cfg.notional_usdt / px
+                    if sig.invalidation is None:
+                        initial_stop_bps = 0.0
+                    elif sig.direction is Direction.LONG:
+                        initial_stop_bps = max(0.0, (px - sig.invalidation) / px * 10_000.0)
+                    else:
+                        initial_stop_bps = max(0.0, (sig.invalidation - px) / px * 10_000.0)
                     position = {
                         "signal": sig, "signal_time_ms": signal_row.close_time_ms,
                         "entry_index": idx, "entry_time_ms": row.open_time_ms,
                         "entry_price": px, "qty": qty,
                         "take_profit": take_profit,
+                        "initial_stop_bps": initial_stop_bps,
                         "mae_usdt": 0.0, "mfe_usdt": 0.0,
                     }
 
@@ -317,6 +327,7 @@ def run_backtest(
                     mae_usdt=float(position["mae_usdt"]),
                     mfe_usdt=float(position["mfe_usdt"]),
                     regime=sig.regime,
+                    initial_stop_bps=float(position["initial_stop_bps"]),
                 ))
                 position = None
 
@@ -354,6 +365,7 @@ def run_backtest(
             mae_usdt=float(position["mae_usdt"]),
             mfe_usdt=float(position["mfe_usdt"]),
             regime=sig.regime,
+            initial_stop_bps=float(position["initial_stop_bps"]),
         ))
 
     return BacktestResult(
