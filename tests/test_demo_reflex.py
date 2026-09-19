@@ -18,8 +18,9 @@ class FakeResponse:
 
 
 class FakeRest:
-    def __init__(self, dual_side: bool, *, orders=None, algos=None, positions=None):
+    def __init__(self, dual_side: bool, *, orders=None, algos=None, positions=None, leverage_failures: int = 0):
         self.dual_side = dual_side
+        self.leverage_failures = leverage_failures
         self.leverage_calls: list[tuple[str, int]] = []
         self.orders = list(orders or [])
         self.algos = list(algos or [])
@@ -33,6 +34,11 @@ class FakeRest:
 
     def change_initial_leverage(self, *, symbol: str, leverage: int):
         self.leverage_calls.append((symbol, leverage))
+        if self.leverage_failures > 0:
+            self.leverage_failures -= 1
+            exc = RuntimeError("Network error: read timed out")
+            exc.__class__.__name__ = "RuntimeError"
+            raise exc
         return FakeResponse({"symbol": symbol, "leverage": leverage})
 
     def current_all_open_orders(self):
@@ -309,3 +315,10 @@ def test_demo_preflight_keeps_protective_algo_until_position_is_flat():
     assert rest.positions == []
     assert rest.orders == []
     assert rest.algos == []
+
+
+def test_demo_preflight_retries_transient_leverage_timeout():
+    rest = FakeRest(dual_side=False, leverage_failures=1)
+    result = preflight_demo(rest, ("BTCUSDT",), leverage=3)
+    assert result == {"canceled_orders": 0, "canceled_algos": 0, "closed_positions": 0}
+    assert rest.leverage_calls == [("BTCUSDT", 3), ("BTCUSDT", 3)]
