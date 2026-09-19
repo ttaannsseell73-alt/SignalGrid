@@ -13,7 +13,8 @@ from typing import Any
 import websockets
 
 
-FSTREAM_BASE = "wss://fstream.binance.com/ws"
+PUBLIC_STREAM_BASE = "wss://fstream.binance.com/public/stream?streams="
+MARKET_STREAM_BASE = "wss://fstream.binance.com/market/stream?streams="
 
 
 def _imbalance(bid: float, ask: float) -> float:
@@ -237,19 +238,22 @@ class ShadowStore:
         self.conn.close()
 
 
-def subscription_names(symbols: tuple[str, ...]) -> list[str]:
+def public_stream_names(symbols: tuple[str, ...]) -> list[str]:
     streams: list[str] = []
     for symbol in symbols:
         s = symbol.lower()
-        streams.extend(
-            [
-                f"{s}@aggTrade",
-                f"{s}@bookTicker",
-                f"{s}@depth20@100ms",
-            ]
-        )
+        streams.extend([f"{s}@bookTicker", f"{s}@depth20@100ms"])
     return streams
 
+
+def market_stream_names(symbols: tuple[str, ...]) -> list[str]:
+    return [f"{symbol.lower()}@aggTrade" for symbol in symbols]
+
+
+def combined_url(base: str, streams: list[str]) -> str:
+    if not streams:
+        raise ValueError("at least one stream is required")
+    return base + "/".join(streams)
 
 def _stream_name_for_event(symbol: str, event: str) -> str:
     s = symbol.lower()
@@ -277,6 +281,7 @@ async def record_shadow(
     messages = 0
     event_counts: dict[str, int] = {}
     stream_counts: dict[str, int] = {}
+    connection_errors: dict[str, str] = {}
     last_agg_id: dict[str, int] = {}
 
     def handle(data: dict[str, Any], stream_name: str) -> None:
@@ -329,64 +334,7 @@ async def record_shadow(
         if messages % 1000 == 0:
             store.commit()
 
-    async def market_loop() -> None:
-        params = [
-            name
-            for name in subscription_names(symbols)
-            if not name.endswith("@aggTrade")
-        ]
-        failures = 0
-        while time.monotonic() < deadline:
-            try:
-                async with websockets.connect(
-                    FSTREAM_BASE,
-                    ping_interval=20,
-                    ping_timeout=20,
-                    close_timeout=10,
-                    max_size=4 * 1024 * 1024,
-                ) as ws:
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "method": "SUBSCRIBE",
-                                "params": params,
-                                "id": 1,
-                            }
-                        )
-                    )
-                    failures = 0
-                    while time.monotonic() < deadline:
-                        remaining = deadline - time.monotonic()
-                        try:
-                            raw = await asyncio.wait_for(
-                                ws.recv(),
-                                timeout=min(30.0, remaining),
-                            )
-                        except asyncio.TimeoutError:
-                            continue
-                        payload = json.loads(raw)
-                        if payload.get("id") == 1 and "result" in payload:
-                            continue
-                        data = payload.get("data", payload)
-                        symbol = str(data.get("s", "")).upper()
-                        event = str(data.get("e") or "unknown")
-                        if symbol in acc:
-                            handle(
-                                data,
-                                _stream_name_for_event(symbol, event),
-                            )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                failures += 1
-                await asyncio.sleep(min(5.0, 0.25 * (2 ** min(failures, 4))))
-
-    async def trade_loop(symbol: str) -> None:
-        # Keep aggTrade on a dedicated raw connection. This isolates trade flow
-        # from high-volume book/depth traffic and avoids one stream being starved
-        # or silently omitted by a multiplexed connection.
-        lower = symbol.lower()
-        url = f"wss://fstream.binance.com/ws/{lower}@aggTrade"
+    async def stream_loop(name: str, url: str) -> None:
         failures = 0
         while time.monotonic() < deadline:
             try:
@@ -395,11 +343,14 @@ async def record_shadow(
                     ping_interval=20,
                     ping_timeout=20,
                     close_timeout=10,
-                    max_size=2 * 1024 * 1024,
+                    max_size=4 * 1024 * 1024,
                 ) as ws:
                     failures = 0
+                    connection_errors.pop(name, None)
                     while time.monotonic() < deadline:
                         remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
                         try:
                             raw = await asyncio.wait_for(
                                 ws.recv(),
@@ -407,20 +358,22 @@ async def record_shadow(
                             )
                         except asyncio.TimeoutError:
                             continue
-                        data = json.loads(raw)
-                        handle(data, f"{lower}@aggTrade")
+                        payload = json.loads(raw)
+                        stream_name = str(payload.get("stream", "unknown"))
+                        data = payload.get("data", payload)
+                        handle(data, stream_name)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 failures += 1
+                connection_errors[name] = f"{type(exc).__name__}: {exc}"
                 await asyncio.sleep(min(5.0, 0.25 * (2 ** min(failures, 4))))
 
+    public_url = combined_url(PUBLIC_STREAM_BASE, public_stream_names(symbols))
+    market_url = combined_url(MARKET_STREAM_BASE, market_stream_names(symbols))
     tasks = [
-        asyncio.create_task(market_loop(), name="shadow-market"),
-        *[
-            asyncio.create_task(trade_loop(symbol), name=f"shadow-trades-{symbol}")
-            for symbol in symbols
-        ],
+        asyncio.create_task(stream_loop("public", public_url), name="shadow-public"),
+        asyncio.create_task(stream_loop("market", market_url), name="shadow-market"),
     ]
 
     try:
@@ -435,6 +388,11 @@ async def record_shadow(
             "rows": store.count(),
             "event_counts": event_counts,
             "stream_counts": stream_counts,
+            "connection_errors": connection_errors,
+            "endpoints": {
+                "public": public_url,
+                "market": market_url,
+            },
             "db_path": str(db_path),
         }
     finally:
