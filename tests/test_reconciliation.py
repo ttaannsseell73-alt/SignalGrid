@@ -109,3 +109,92 @@ def test_provider_uses_all_three_authoritative_rest_snapshots():
             return []
     snapshot = BinanceRestSnapshotProvider(Rest()).snapshot()
     assert snapshot == empty_snapshot()
+
+
+def test_reconciliation_ignores_quantity_drift_for_close_position_algo(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    store.upsert_algo_order(
+        StoredAlgoOrder(
+            "sg-x-close",
+            "99",
+            "FETUSDT",
+            "SELL",
+            "NEW",
+            "CONDITIONAL",
+            "STOP_MARKET",
+            Decimal("0.42"),
+            Decimal("279.1"),
+            True,
+            False,
+            "",
+            1,
+        )
+    )
+    snapshot = AccountSnapshot(
+        (),
+        (
+            ExchangeAlgoSnapshot(
+                "sg-x-close",
+                "99",
+                "FETUSDT",
+                "SELL",
+                "NEW",
+                "CONDITIONAL",
+                "STOP_MARKET",
+                Decimal("0.42"),
+                Decimal("0"),
+                True,
+                False,
+                "",
+            ),
+        ),
+        (),
+    )
+    report = AccountReconciler(store, SnapshotProvider(snapshot)).reconcile()
+    assert report.ok
+    assert not store.halted()
+    assert store.execution_ready()
+
+
+def test_reconciliation_keeps_quantity_identity_for_non_close_position_algo(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    store.upsert_algo_order(
+        StoredAlgoOrder(
+            "sg-x-fixed",
+            "100",
+            "SOLUSDT",
+            "SELL",
+            "NEW",
+            "CONDITIONAL",
+            "STOP_MARKET",
+            Decimal("140"),
+            Decimal("1.0"),
+            False,
+            False,
+            "",
+            1,
+        )
+    )
+    snapshot = AccountSnapshot(
+        (),
+        (
+            ExchangeAlgoSnapshot(
+                "sg-x-fixed",
+                "100",
+                "SOLUSDT",
+                "SELL",
+                "NEW",
+                "CONDITIONAL",
+                "STOP_MARKET",
+                Decimal("140"),
+                Decimal("2.0"),
+                False,
+                False,
+                "",
+            ),
+        ),
+        (),
+    )
+    with pytest.raises(StateMismatchError, match="algo_qty"):
+        AccountReconciler(store, SnapshotProvider(snapshot)).reconcile()
+    assert store.halted()
