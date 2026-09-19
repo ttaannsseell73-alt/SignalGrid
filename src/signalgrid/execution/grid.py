@@ -20,6 +20,7 @@ class GridConfig:
     min_spacing_bps: float = 15.0
     max_spacing_bps: float = 120.0
     take_profit_steps: float = 1.5
+    min_take_profit_bps: float = 0.0
     neutral_levels_per_side: int = 2
     neutral_stop_steps: float = 3.0
     neutral_ttl_seconds: float = 300.0
@@ -38,6 +39,8 @@ class GridConfig:
             raise ValueError("invalid spacing bounds")
         if self.take_profit_steps <= 0:
             raise ValueError("take_profit_steps must be positive")
+        if self.min_take_profit_bps < 0:
+            raise ValueError("min_take_profit_bps must be >= 0")
         if not 1 <= self.neutral_levels_per_side <= 3:
             raise ValueError("neutral_levels_per_side must be between 1 and 3")
         if self.neutral_stop_steps <= self.neutral_levels_per_side:
@@ -176,7 +179,8 @@ def build_grid_plan(
                 raise GridPlanError("grid level price became non-positive")
             entries.append(GridEntryLevel(index, "LIMIT", price, per_limit, signal.direction))
 
-    take_profit = reference * (1.0 + side * spacing * cfg.take_profit_steps)
+    target_bps = max(spacing_bps * cfg.take_profit_steps, cfg.min_take_profit_bps)
+    take_profit = reference * (1.0 + side * target_bps / 10_000.0)
     return GridPlan(
         campaign_id=_campaign_id(signal, state),
         symbol=signal.symbol.upper(),
