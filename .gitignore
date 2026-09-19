@@ -6,3 +6,6 @@ __pycache__/
 *.db-shm
 *.db-wal
 .env
+runs/
+validation/*.json
+data/scalping/
