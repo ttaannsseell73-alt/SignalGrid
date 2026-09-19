@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
 
     gate_path = Path(args.gate_output)
     if all_passed:
-        if scopes != {"PRICE_ACTION_TAKER_ONLY"}:
+        if scopes != {"SONAR_PRICE_TAKER_NO_BOOK"}:
             raise RuntimeError("portfolio historical microstructure scope is inconsistent")
         gate_path.parent.mkdir(parents=True, exist_ok=True)
         gate_path.write_text(
@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
                     "gate_passed": True,
                     "profile_version": SCALPING_PROFILE_VERSION,
                     "validated_symbols": validated,
-                    "historical_microstructure_scope": "PRICE_ACTION_TAKER_ONLY",
+                    "historical_microstructure_scope": "SONAR_PRICE_TAKER_NO_BOOK",
                     "portfolio_results": results,
                 },
                 indent=2,
