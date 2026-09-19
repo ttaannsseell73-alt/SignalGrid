@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/canonical-scalping-paper-smoke.yml"
       - "src/signalgrid/ops/run_scalping_paper.py"
+      - "src/signalgrid/scalping_profile.py"
       - "src/signalgrid/scanner.py"
       - "src/signalgrid/sonar/**"
       - "src/signalgrid/signals/scalping.py"
