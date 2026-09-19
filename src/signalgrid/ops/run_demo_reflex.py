@@ -96,7 +96,7 @@ class ReflexStats:
         symbol = result.symbol.upper()
         current = result.signal.direction
         self.evaluations_seen += 1
-        mode = result.signal.grid_mode or GridMode.PASS
+        mode = getattr(result.signal, "grid_mode", None) or GridMode.PASS
         if mode is GridMode.NEUTRAL_GRID:
             self.neutral_signals_seen += 1
             if result.emitted:
