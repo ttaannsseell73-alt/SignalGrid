@@ -146,6 +146,17 @@
 8. Only after sufficient evidence consider very small live-capital validation.
 
 ## CURRENT GATE
-**No profitable edge has been demonstrated yet. Demo remains locked.**
+**No profitable edge has been demonstrated yet. Binance Demo remains locked.**
 
-Current work is signal-quality research, not parameter loosening. The explored 1m candidate family has not generalized. Research has moved to higher-frequency aggTrades-derived features while Demo remains locked.
+Active canonical path is now deliberately narrow:
+
+`Binance public market data -> Coin Sonar V2 -> Signal Hub -> Risk -> PAPER execution`
+
+The active validation runner is `RUN_SCALPING_PAPER.cmd`. It uses the locked architecture on forward live public data with **paper-only execution and no API keys**. Research-only matrices and abandoned hypothesis runners were removed from the active branch and preserved in `research-archive-20260919`.
+
+The historical quant gate remains useful as evidence for the Signal Hub profile, but it does **not** by itself validate the full Coin Sonar V2 runtime because the historical archive scope lacks the same live spread/order-book context. Therefore it cannot be used to bypass canonical forward PAPER validation.
+
+Next promotion gate:
+1. canonical PAPER chain must run cleanly and collect sufficient forward evidence;
+2. Coin Sonar wake -> Signal Hub -> Risk -> execution telemetry must be internally consistent;
+3. only then is a fresh Demo-unlock validation considered.
