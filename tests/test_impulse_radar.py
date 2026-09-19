@@ -1,4 +1,4 @@
-from signalgrid.market.state import SymbolState
+from signalgrid.market.state import Bar, SymbolState
 from signalgrid.sonar.impulse_radar import (
     ImpulseRadar,
     ImpulseRadarConfig,
@@ -75,3 +75,31 @@ def test_wide_spread_never_wakes_signal_hub():
     s.best_bid = 99.0
     s.best_ask = 101.0
     assert radar.observe(s, 6_000) is None
+
+
+def test_historical_bucket_turnover_mode_does_not_require_fake_spread():
+    cfg = ImpulseRadarConfig(
+        windows=(ImpulseWindow(120_000, 10.0),),
+        min_baseline_seconds=60,
+        turnover_baseline_seconds=180,
+        min_turnover_ratio=1.0,
+        sample_interval_ms=60_000,
+        wake_cooldown_ms=1_000,
+        turnover_mode="BUCKET_TOTAL",
+        require_spread=False,
+    )
+    radar = ImpulseRadar(cfg)
+    s = SymbolState("BTCUSDT")
+    for minute in range(4):
+        price = 100.0
+        s.add_bar(Bar(price, price, price, price, 1.0))
+        s.taker_buy_quote = 600.0
+        s.taker_sell_quote = 400.0
+        assert radar.observe(s, minute * 60_000) is None
+
+    s.add_bar(Bar(100.0, 100.3, 100.0, 100.3, 1.0))
+    s.taker_buy_quote = 1_500.0
+    s.taker_sell_quote = 500.0
+    event = radar.observe(s, 4 * 60_000)
+    assert event is not None
+    assert event.spread_bps == -1.0
