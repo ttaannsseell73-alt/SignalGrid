@@ -2,52 +2,70 @@
 
 ## STATUS — ACTIVE
 - Active project: Binance USDⓈ-M Futures **scalping bot**.
+- Canonical repo: `ttaannsseell73-alt/SignalGrid`.
 - Canonical branch: `scalping-v1`.
-- The previous generic SignalGrid/grid-demo line is not the active development target on this branch.
-- Goal: fast, bounded-duration intraday scalps with deterministic execution and strict risk controls.
-- First validation stages: offline replay/backtest -> Binance Futures Demo/Testnet -> only later consider small live capital.
+- Previous generic SignalGrid/grid-demo line is not the active strategy target.
+- No live-capital mode is enabled.
 
 ## LOCKED STRATEGY RULES
-- Classic indicator stacks such as RSI/MACD/Stochastic/EMA-cross are not the primary decision engine.
+- Classic RSI/MACD/Stochastic/EMA-cross stacks are not the primary decision engine.
 - Primary signal layer is quantified Price Action:
   - market structure / swings
-  - HH/HL/LH/LL
-  - range and compression
   - breakout + retest
   - liquidity sweep / failed breakout
   - rejection
-  - expansion
-- Microstructure layer:
+  - range compression -> expansion
+- Microstructure:
   - spread
-  - taker-flow imbalance / CVD where reliable
+  - taker-flow imbalance
   - book imbalance
-  - price-impact / absorption efficiency
-  - open-interest delta only when trustworthy data is available
-- Missing historical microstructure fields are marked unavailable; no fabricated proxies.
-- Quant validation is mandatory:
-  - hit rate
-  - expectancy
-  - MAE/MFE
-  - holding time
-  - regime dependence
-  - fees + spread + slippage net result
-- Grid is not the strategy. It may be used only as an execution mechanism when the scalping signal/risk layer authorizes it.
-
-## EXECUTION TARGET
-- Low-latency event-driven flow.
-- Multiple simultaneous opportunities may be handled when risk limits permit.
-- Entries must be immediately actionable; stale signals are discarded.
-- Execution model must account for spread, slippage, fill probability and order state.
+  - later: absorption / price-impact efficiency
+  - OI delta only where trustworthy historical/live data exists
+- Missing microstructure data is unavailable, never fabricated.
+- Grid is execution only, never the strategy.
+- No martingale and no infinite refill grid.
 - Reconciliation is fail-closed.
-- No martingale.
-- No infinite grid.
-- Every position has bounded risk and deterministic invalidation/exit behavior.
 
-## ARCHITECTURE
-Market Data -> Price Action Features -> Microstructure -> Regime/Structure -> Quant Score/Expectancy -> Scalping Decision -> Execution -> Risk/Reconciliation
+## IMPLEMENTED CHECKPOINT
+### Signal engine
+- Dedicated `ScalpingSignalEngine`.
+- 12-bar structure lookback.
+- Breakout/retest, liquidity-sweep rejection and compression-breakout classification.
+- NATR/expansion regime filter.
+- 4 bps spread gate.
+- Directional taker-flow + book confirmation.
+- Stop-distance bounds.
+- 3-second signal TTL.
+- No neutral grid emission.
 
-## NEXT IMPLEMENTATION GATE
-1. Preserve existing reusable Binance execution/reconciliation infrastructure.
-2. Replace generic grid/demo signal profile with dedicated scalping signal engine.
-3. Add scalping-specific replay tests and cost model.
-4. Require statistically positive net expectancy after costs before Demo/Testnet progression.
+### Quant validation
+- Existing no-lookahead replay engine generalized for the scalping evaluator.
+- Next-bar-open execution rule retained.
+- Real historical `bookTicker` required.
+- Base and stressed friction scenarios.
+- Net expectancy, hit rate, profit factor, drawdown and cost share.
+- MAE/MFE and holding-time metrics added.
+- Setup and regime slices added.
+- Fail-closed `ScalpingValidationGate`.
+- Passing validation writes a profile-versioned local gate marker.
+- Demo runtime refuses to start with missing, failed or stale quant gate.
+
+### Execution / Demo
+- Existing Binance execution, reconciliation and protective order infrastructure reused.
+- Scalping execution profile: 75% starter + one bounded pullback level.
+- Max 3 Demo positions.
+- 3x leverage.
+- Dedicated `RUN_SCALPING_DEMO.cmd` and `RUN_DEMO.cmd`.
+- Dedicated `RUN_SCALPING_VALIDATE.cmd`.
+- Demo secrets remain local in `.env`.
+
+## VALIDATION ORDER — LOCKED
+1. Unit/CI tests.
+2. Historical full-core scalping replay with real bookTicker.
+3. Base + stressed cost gate.
+4. Only if gate PASS -> Binance Futures Demo.
+5. Demo soak/reconciliation/failure testing.
+6. Only after sufficient evidence -> consider very small live-capital validation.
+
+## CURRENT GATE
+Code/CI layer is implemented. The next empirical gate is **historical dataset acquisition + real replay**. No claim of profitable edge is allowed until the cost-stressed historical gate actually passes.
