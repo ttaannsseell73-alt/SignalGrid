@@ -61,6 +61,7 @@ Locked constraints:
 - M7 bounded neutral-grid regime + execution: `6d2b817dde56a3efef722a3226c7bd5507f51d8e`
 - M7 directional stop-geometry signal gate: `a4ade7759a4ed9fb54bbb0f45813d1b71df21227`
 - M7 close-position algo identity hardening: `a734d10c4a2217248e8aea72c2212c7e25c97dd5`
+- M7 Binance algo lifecycle hardening (`TRIGGERED -> FINISHED`): `46deaab53dbc61aeafd8da249e611cf8b10a1af4`
 
 ## Milestones
 - [x] M0 project skeleton
@@ -109,12 +110,15 @@ Locked constraints:
 - Authenticated Demo rerun after the stop-geometry gate completed 2 opens, 2 closes and 2 cleanups with `open_failures=0`, `last_open_error=null`, `STOP_TOO_CLOSE=24`, no orphans and no protection gaps, but then halted on `ALGO_IDENTITY_CONFLICT:...:qty:0!=279.1`. Account state was otherwise fully flat/clean.
 - Root cause: the same Binance `closePosition=true` protective algo can report `quantity=0` in REST/one ALGO_UPDATE phase and the then-current position quantity in another ALGO_UPDATE phase. For close-position STOP/TP orders quantity is not a fixed identity field; `closePosition=true` means close the entire position at trigger.
 - PR #19 merged as `a734d10c4a2217248e8aea72c2212c7e25c97dd5`; CI PASS on Python 3.11/3.12/3.13. User-stream identity checks and REST reconciliation now ignore quantity drift only when both views are `closePosition=true`; fixed-quantity/non-close-position algos remain strict and still fail closed on quantity mismatch.
+- Next authenticated Demo run then halted on `TERMINAL_ALGO_MUTATION:...:TRIGGERED->FINISHED` while account state remained internally consistent (1 position, 3 regular orders, 2 protective algos, no orphans/protection gaps, `open_failures=0`).
+- Root cause: SignalGrid incorrectly classified Binance algo status `TRIGGERED` as terminal. Binance USD-M conditional algo lifecycle can continue from `TRIGGERED` to `FINISHED`; official connector status definitions expose `TRIGGERING`, `TRIGGERED` and `FINISHED` as distinct states.
+- PR #20 merged as `46deaab53dbc61aeafd8da249e611cf8b10a1af4`; CI PASS on Python 3.11/3.12/3.13. `FINISHED/CANCELED/EXPIRED/REJECTED/FAILED` remain final; `TRIGGERED -> FINISHED` is explicitly accepted; backwards mutation from `TRIGGERED` remains fail-closed.
 - Dynamic leverage remains the next required Risk Hub feature after one authenticated Demo neutral lifecycle is proven clean.
 - No live-capital path is enabled.
 
 ## Immediate next task
-1. Pull canonical `main` containing close-position algo identity hardening and rerun `scripts/start_demo_reflex.ps1` with Binance Futures Demo credentials entered locally.
-2. Confirm `STOP_TOO_CLOSE` remains a signal-layer rejection, `open_failures=0`, and no `ALGO_IDENTITY_CONFLICT` occurs when close-position algo quantity changes between 0 and current position size.
+1. Pull canonical `main` containing Binance algo lifecycle hardening and rerun `scripts/start_demo_reflex.ps1` with Binance Futures Demo credentials entered locally.
+2. Confirm `STOP_TOO_CLOSE` stays a signal-layer rejection, `open_failures=0`, no `ALGO_IDENTITY_CONFLICT`, and no false `TERMINAL_ALGO_MUTATION` on `TRIGGERED -> FINISHED`.
 3. Validation gate: observe at least one `NEUTRAL_GRID` arm and one first-fill activation that becomes protected LONG/SHORT, then flat/cleanup, with no HALT, no orphan state and no protection gaps.
 4. After one clean authenticated neutral lifecycle, implement the Dynamic Leverage Controller inside Risk Hub; do not add a sixth hub.
 5. Then rerun the 1h Demo stress gate and proceed to 24h and 72h Demo validation.
