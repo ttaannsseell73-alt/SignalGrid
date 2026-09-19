@@ -54,7 +54,7 @@ SONAR_PRICE_TAKER_NO_BOOK
 A fresh gate must match the current profile version:
 
 ```text
-SCALPING_V1_20260919_R4_SONAR_LOCK
+SCALPING_V1_20260919_R10_WAKE60_STOP75_TTL6
 ```
 
 The previous pre-Sonar results failed the profitability gate and do not unlock Demo.

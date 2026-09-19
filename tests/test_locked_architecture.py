@@ -22,6 +22,7 @@ def test_locked_scalping_architecture_requires_coin_sonar_before_signal_hub():
     assert "ImpulseRadar(SCALPING_SONAR_CONFIG)" in paper_source
     assert "IMPULSE_RADAR_SLEEP" in scanner_source
     assert "self.impulse_radar.observe" in scanner_source
+    assert "self.impulse_radar.is_awake" in scanner_source
 
 
 def test_locked_coin_sonar_is_adaptive_not_fixed_dollar_threshold():

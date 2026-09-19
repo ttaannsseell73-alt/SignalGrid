@@ -254,6 +254,21 @@ class ImpulseRadar:
         symbol_state.last_wake_ms = now_ms
         return event
 
+    def is_awake(self, symbol: str, now_ms: int) -> bool:
+        """Keep Signal Hub active through the immediate confirmation window.
+
+        The Sonar event remains only a wake trigger.  A bounded hold equal to
+        the shortest configured impulse window lets the existing Signal Hub
+        observe a retest/confirmation after the impulse without allowing an
+        old event to keep the strategy active indefinitely.
+        """
+        symbol_state = self._states.get(symbol.upper())
+        if symbol_state is None or symbol_state.last_wake_ms is None:
+            return False
+        elapsed = now_ms - symbol_state.last_wake_ms
+        hold_ms = min(window.window_ms for window in self.config.windows)
+        return 0 <= elapsed <= hold_ms
+
     def _adaptive_quote_rate(self, samples: deque[_Sample], now_ms: int) -> float:
         cutoff = now_ms - self.config.turnover_baseline_seconds * 1_000
         baseline = [sample for sample in samples if sample.time_ms >= cutoff]

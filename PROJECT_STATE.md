@@ -60,7 +60,7 @@
 PAPER, historical validation and Demo must derive from this profile. CI fails if Coin Sonar is bypassed.
 
 Profile version:
-`SCALPING_V1_20260919_R9_STOP75_TTL6`
+`SCALPING_V1_20260919_R10_WAKE60_STOP75_TTL6`
 
 ## VERIFIED CHECKPOINTS
 - Python unit/CI suite passes on Python 3.11 / 3.12 / 3.13 at the last clean checkpoint.
@@ -86,12 +86,12 @@ Historical scope:
 
 Historical book/spread fields are not fabricated. Historical Sonar uses real kline price + quote turnover/taker-flow with `BUCKET_TOTAL`; live spread/book gates remain forward-only evidence.
 
-The previous pre-Sonar empirical profile failed positive-expectancy gates. It is not evidence of profitability and cannot unlock Demo. The R9 stop-bounded TTL6 Sonar-locked profile requires a fresh validation artifact.
+The previous pre-Sonar empirical profile failed positive-expectancy gates. It is not evidence of profitability and cannot unlock Demo. The R10 profile combines the bounded six-minute execution horizon with a Signal Hub wake held only for the shortest Sonar window, allowing immediate post-impulse confirmation/retest without an unbounded stale wake. It requires a fresh validation artifact.
 
 ## PROMOTION ORDER
 1. CI + runtime/public-stream smoke PASS.
 2. Canonical forward PAPER chain PASS and accumulate sufficient telemetry.
-3. Fresh R9 historical cost-stressed validation PASS.
+3. Fresh R10 historical cost-stressed validation PASS.
 4. Only then consider Binance Futures Demo.
 5. Demo soak/reconciliation/failure testing.
 6. Live capital remains out of scope until evidence supports it.
