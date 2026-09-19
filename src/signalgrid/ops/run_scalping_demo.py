@@ -62,8 +62,8 @@ SCALPING_RISK_CONFIG = RiskConfig(
 )
 
 SCALPING_GRID_CONFIG = GridConfig(
-    entry_levels=2,
-    starter_fraction=0.75,
+    entry_levels=1,
+    starter_fraction=1.0,
     spacing_natr_multiplier=0.20,
     min_spacing_bps=4.0,
     max_spacing_bps=25.0,
