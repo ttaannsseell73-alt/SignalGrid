@@ -81,15 +81,28 @@
 - Best aggregate RR research region was 2.0R / 6 bars, but still negative after stressed costs across BTC/ETH/SOL.
 - No research candidate has been promoted into the canonical strategy.
 
-### Research in progress
-- Setup × direction isolation matrix:
-  - BREAKOUT_RETEST
-  - LIQUIDITY_SWEEP_REJECTION
-  - BREAKOUT_ACCEPTANCE
-  - COMPRESSION_BREAKOUT
-  - BOTH / LONG / SHORT
-- Fixed research profile uses the strongest prior filter region and 2.0R / 6 bars.
-- Goal: determine whether aggregate losses hide any repeatable setup/direction sub-edge.
+### Setup / direction isolation result
+- 12-candidate setup × direction matrix: **0 passing candidates**.
+- The only interesting exploratory pocket was LONG `LIQUIDITY_SWEEP_REJECTION`:
+  - BTC OOS-stress expectancy +0.0504, PF 1.267, 9 trades.
+  - ETH OOS-stress expectancy +0.2036, PF 3.328, 8 trades.
+  - SOL OOS-stress expectancy -0.1312, PF 0.438, 27 trades.
+- Trade counts on BTC/ETH were too small for promotion and SOL contradicted the edge.
+
+### Disjoint candidate test
+- The LONG liquidity-sweep pocket was frozen **before** a separate historical test.
+- Disjoint period: 60 days ending 2026-08-19, BTCUSDT + ETHUSDT.
+- Result: **REJECTED**.
+- BTC stress: 18 trades, expectancy -0.2158, PF 0.141.
+- ETH stress: 41 trades, expectancy -0.2621, PF 0.077.
+- Therefore the positive exploratory pocket did not generalize and is retired.
+
+### High-frequency research
+- Binance USD-M `aggTrades` pipeline is implemented and checksum-verified.
+- 1 day BTCUSDT successfully produced 17,280 continuous 5-second bars.
+- Three first-pass 5s profiles all had negative gross and net expectancy.
+- This confirms that simply shrinking the existing 1m logic to 5s does not create an edge.
+- Current research is a new microstructure hypothesis: liquidity sweep + aggressive-flow sign reversal (delta flip).
 
 ## RESEARCH HYGIENE — LOCKED
 - The current 30-day BTC/ETH/SOL window is now **exploration data** because multiple hypotheses have been inspected against it.
@@ -111,4 +124,4 @@
 ## CURRENT GATE
 **No profitable edge has been demonstrated yet. Demo remains locked.**
 
-Current work is signal-quality research, not parameter loosening. The next promotion decision depends on the setup/direction isolation results and then a disjoint-period validation.
+Current work is signal-quality research, not parameter loosening. The explored 1m candidate family has not generalized. Research has moved to higher-frequency aggTrades-derived features while Demo remains locked.
