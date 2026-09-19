@@ -70,7 +70,7 @@ jobs:
           python - <<'PY'
           import json, sqlite3
           db = sqlite3.connect("artifacts/canonical-paper.db")
-          rows = dict(db.execute("SELECT key, value FROM runtime").fetchall())
+          rows = dict(db.execute("SELECT key, value FROM runtime_state").fetchall())
           stats = json.loads(rows["runtime_stats"])
           assert rows["coin_sonar_v2"] == "ENABLED"
           assert rows["execution_mode"] == "PAPER_ONLY"
