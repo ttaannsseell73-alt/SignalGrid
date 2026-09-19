@@ -35,6 +35,7 @@ class ScalpingConfig:
     compression_ratio_max: float = 0.78
     retest_tolerance_bps: float = 8.0
     max_spread_bps: float = 4.0
+    require_book_microstructure: bool = True
     min_natr_bps: float = 4.0
     max_natr_bps: float = 180.0
     min_expansion: float = 0.90
@@ -177,11 +178,16 @@ class ScalpingSignalEngine:
         nv = natr(bars)
         vx = volatility_expansion(bars)
         spr = spread_bps(state.best_bid, state.best_ask)
+        book_available = (
+            spr is not None
+            and state.bid_depth + state.ask_depth > 0
+        )
 
         if nv is None or vx is None:
             return Signal.pass_signal(state.symbol, "SCALP_WARMUP")
-        if spr is None or spr > self.cfg.max_spread_bps:
-            return Signal.pass_signal(state.symbol, "SCALP_LIQUIDITY_GATE")
+        if self.cfg.require_book_microstructure:
+            if not book_available or spr is None or spr > self.cfg.max_spread_bps:
+                return Signal.pass_signal(state.symbol, "SCALP_LIQUIDITY_GATE")
 
         natr_bps = nv * 10_000.0
         if natr_bps < self.cfg.min_natr_bps:
@@ -217,8 +223,12 @@ class ScalpingSignalEngine:
             return Signal.pass_signal(state.symbol, "SCALP_STOP_TOO_WIDE")
 
         ti = taker_imbalance(state.taker_buy_quote, state.taker_sell_quote)
-        bi = book_imbalance(state.bid_depth, state.ask_depth)
-        directional_flow = side * (0.65 * ti + 0.35 * bi)
+        bi = book_imbalance(state.bid_depth, state.ask_depth) if book_available else None
+        directional_flow = (
+            side * (0.65 * ti + 0.35 * bi)
+            if bi is not None
+            else side * ti
+        )
         if directional_flow < self.cfg.min_directional_flow:
             return Signal.pass_signal(state.symbol, "SCALP_FLOW_NOT_CONFIRMED")
 
@@ -272,22 +282,29 @@ class ScalpingSignalEngine:
         if setup in {"BREAKOUT_RETEST", "LIQUIDITY_SWEEP_REJECTION"}:
             expansion_score = max(0.45, expansion_score)
 
-        spread_score = 1.0 - min(1.0, spr / max(self.cfg.max_spread_bps, 1e-9))
+        spread_score = (
+            None
+            if spr is None
+            else 1.0 - min(1.0, spr / max(self.cfg.max_spread_bps, 1e-9))
+        )
         stop_quality = 1.0 - min(
             1.0,
             max(0.0, stop_bps - self.cfg.min_stop_bps)
             / max(self.cfg.max_stop_bps - self.cfg.min_stop_bps, 1e-9),
         )
 
-        strength = (
-            0.30 * structure_score
-            + 0.22 * flow_score
-            + 0.14 * expansion_score
-            + 0.10 * spread_score
-            + 0.09 * stop_quality
-            + 0.10 * context_score
-            + 0.05 * impact_score
-        )
+        weighted_components = [
+            (0.30, structure_score),
+            (0.24, flow_score),
+            (0.15, expansion_score),
+            (0.10, stop_quality),
+            (0.11, context_score),
+            (0.05, impact_score),
+        ]
+        if spread_score is not None:
+            weighted_components.append((0.05, spread_score))
+        weight_sum = sum(weight for weight, _ in weighted_components)
+        strength = sum(weight * value for weight, value in weighted_components) / weight_sum
         if strength < self.cfg.min_score:
             return Signal.pass_signal(state.symbol, "SCALP_LOW_SCORE")
 
