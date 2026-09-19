@@ -28,6 +28,8 @@ class ImpulseRadarConfig:
     sample_interval_ms: int = 1_000
     persistence_window_ms: int = 3_600_000
     wake_cooldown_ms: int = 2_000
+    turnover_mode: str = "CUMULATIVE_WINDOW"
+    require_spread: bool = True
 
     def __post_init__(self) -> None:
         if not self.windows:
@@ -42,6 +44,8 @@ class ImpulseRadarConfig:
             raise ValueError("max_spread_bps must be positive")
         if self.sample_interval_ms < 100:
             raise ValueError("sample_interval_ms must be >= 100")
+        if self.turnover_mode not in {"CUMULATIVE_WINDOW", "BUCKET_TOTAL"}:
+            raise ValueError("turnover_mode must be CUMULATIVE_WINDOW or BUCKET_TOTAL")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,25 +99,33 @@ class ImpulseRadar:
         self._states: dict[str, _SymbolRadarState] = {}
 
     def observe(self, state: SymbolState, now_ms: int) -> ImpulseRadarEvent | None:
-        if (
-            state.best_bid is None
-            or state.best_ask is None
-            or state.best_bid <= 0
-            or state.best_ask < state.best_bid
-        ):
-            return None
-
-        mid = (state.best_bid + state.best_ask) / 2.0
-        spread_bps = (state.best_ask - state.best_bid) / mid * 10_000.0
-        if spread_bps > self.config.max_spread_bps:
-            return None
+        has_book = (
+            state.best_bid is not None
+            and state.best_ask is not None
+            and state.best_bid > 0
+            and state.best_ask >= state.best_bid
+        )
+        if has_book:
+            assert state.best_bid is not None and state.best_ask is not None
+            mid = (state.best_bid + state.best_ask) / 2.0
+            spread_bps = (state.best_ask - state.best_bid) / mid * 10_000.0
+            if spread_bps > self.config.max_spread_bps:
+                return None
+        else:
+            if self.config.require_spread or not state.bars or state.bars[-1].close <= 0:
+                return None
+            mid = state.bars[-1].close
+            # Explicit sentinel: historical kline archives do not contain spread.
+            spread_bps = -1.0
 
         symbol_state = self._states.setdefault(state.symbol, _SymbolRadarState())
         raw_turnover = max(0.0, state.taker_buy_quote + state.taker_sell_quote)
-        if raw_turnover >= symbol_state.last_raw_turnover:
+        if self.config.turnover_mode == "BUCKET_TOTAL":
+            delta = raw_turnover
+        elif raw_turnover >= symbol_state.last_raw_turnover:
             delta = raw_turnover - symbol_state.last_raw_turnover
         else:
-            # Binance flow buckets reset; preserve cumulative turnover without
+            # Binance live flow buckets reset; preserve cumulative turnover without
             # treating the reset as negative activity.
             delta = raw_turnover
         symbol_state.last_raw_turnover = raw_turnover
