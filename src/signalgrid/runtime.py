@@ -63,6 +63,9 @@ class RuntimeStats:
     def __init__(self) -> None:
         self.market_events = 0
         self.evaluations = 0
+        self.sonar_sleeps = 0
+        self.sonar_wakes = 0
+        self.signal_hub_evaluations = 0
         self.signals_emitted = 0
         self.campaigns_opened = 0
         self.campaigns_closed = 0
@@ -79,6 +82,9 @@ class RuntimeStats:
         return {
             "market_events": self.market_events,
             "evaluations": self.evaluations,
+            "sonar_sleeps": self.sonar_sleeps,
+            "sonar_wakes": self.sonar_wakes,
+            "signal_hub_evaluations": self.signal_hub_evaluations,
             "signals_emitted": self.signals_emitted,
             "campaigns_opened": self.campaigns_opened,
             "campaigns_closed": self.campaigns_closed,
@@ -309,6 +315,14 @@ class SignalGridRuntime:
         if result is None:
             return
         self.stats.evaluations += 1
+        if self.scanner.impulse_radar is not None:
+            if result.reason == "IMPULSE_RADAR_SLEEP":
+                self.stats.sonar_sleeps += 1
+            else:
+                self.stats.sonar_wakes += 1
+                self.stats.signal_hub_evaluations += 1
+        else:
+            self.stats.signal_hub_evaluations += 1
         if not result.emitted:
             return
         self.stats.signals_emitted += 1
