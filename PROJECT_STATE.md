@@ -1,162 +1,102 @@
 # PROJECT_STATE — SCALPING V1
 
-## STATUS — ACTIVE
-- Active project: Binance USDⓈ-M Futures **scalping bot**.
-- Canonical repo: `ttaannsseell73-alt/SignalGrid`.
-- Canonical branch: `scalping-v1`.
-- Previous generic SignalGrid/grid-demo line is not the active strategy target.
-- No live-capital mode is enabled.
-- Binance Demo remains locked until the quant gate genuinely passes.
+## CANONICAL STATUS
+- Repo: `ttaannsseell73-alt/SignalGrid`
+- Branch: `scalping-v1`
+- Active system: Binance USDⓈ-M Futures scalping bot.
+- Canonical entrypoint: `RUN_SCALPING.cmd`
+- Current execution stage: **forward PAPER only**.
+- Binance Demo and live capital remain locked.
+- Research-only experiments were removed from the active branch and preserved in `research-archive-20260919`.
 
-## LOCKED COIN SONAR V2
-- Coin Sonar V2 is **Impulse Radar only**.
-- It is not a trade signal, not a separate strategy, not a new hub and never bypasses Risk.
-- Locked placement:
-  `Market Data Hub -> Impulse Radar wake event -> existing Signal Hub -> VOL + STRUCTURE + FLOW -> RISK -> GRID`.
-- Inputs:
-  - short-horizon price impulse,
-  - adaptive symbol/time-normalized quote turnover,
-  - taker buy/sell imbalance,
-  - spread/liquidity,
-  - persistence / acceleration.
-- Fixed ~$24K turnover is forbidden. Turnover is adaptive per symbol and time window.
-- Persistence context includes impulse count, time-between-impulses, cumulative displacement and cumulative turnover.
-- Radar output is only symbol wake/event context. LONG/SHORT decisions remain inside the existing Signal Hub.
-- Current implementation uses locked price-impulse reference tiers: <=1m ~0.5%, 3-5m ~1.5%, 5-10m ~1.8%, ~15m ~2.0%, behind adaptive turnover and spread gates.
+## LOCKED ARCHITECTURE
+`Market Data Hub -> Coin Sonar V2 / Impulse Radar -> existing Signal Hub -> VOL + STRUCTURE + FLOW -> Risk -> bounded Execution`
 
-## LOCKED STRATEGY RULES
-- Classic RSI/MACD/Stochastic/EMA-cross stacks are not the primary decision engine.
-- Primary signal layer is quantified Price Action:
-  - market structure / swings
-  - breakout + retest
+### Coin Sonar V2
+- Wake/event layer only; never creates LONG/SHORT by itself.
+- Adaptive per-symbol turnover baseline; no fixed dollar-volume trigger.
+- Uses short-horizon price impulse, quote turnover, taker imbalance, spread/liquidity and persistence/acceleration.
+- Reference impulse tiers remain:
+  - <=1m: ~0.5%
+  - 3–5m: ~1.5%
+  - 5–10m: ~1.8%
+  - ~15m: ~2.0%
+- If Sonar does not wake a symbol, Signal Hub is not evaluated.
+
+### Signal Hub
+- Quantified Price Action:
+  - breakout/retest
   - liquidity sweep / failed breakout
   - rejection
-  - range compression -> expansion
-- Microstructure:
-  - live spread
+  - compression -> expansion
+  - HH/HL and LH/LL context
+- Flow/microstructure confirmation:
   - taker-flow imbalance
   - live book imbalance
-  - absorption / price-impact efficiency where source data supports it
-  - OI delta only where trustworthy historical/live data exists
-- Missing microstructure data is unavailable, never fabricated.
+  - spread gate
+  - absorption / price-impact efficiency
+- Classic RSI/MACD/Stochastic/EMA-cross stacks are not the primary engine.
+- Signal TTL: 3 seconds.
+- No neutral-grid signal.
+
+### Risk / Execution
 - Grid is execution only, never the strategy.
-- No martingale and no infinite refill grid.
+- Single bounded entry in current profile.
+- Max 3 concurrent positions.
+- 3x leverage profile for Demo stage.
+- No martingale.
+- No infinite refill grid.
 - Reconciliation is fail-closed.
+- Protective stop / take-profit lifecycle remains mandatory.
 
-## IMPLEMENTED CHECKPOINT
-### Coin Sonar / Impulse Radar
-- `src/signalgrid/sonar/impulse_radar.py` implemented.
-- Adaptive turnover baseline uses rolling per-symbol quote-rate normalization; no fixed dollar threshold.
-- Tracks persistence/acceleration, impulse count, gaps, cumulative displacement and turnover.
-- `MultiSymbolScanner` can sleep the Signal Hub with `IMPULSE_RADAR_SLEEP`.
-- Canonical scalping Demo scanner now has `ImpulseRadar()` wired before Signal Hub evaluation.
-- Radar emits no trade direction into execution; it only wakes existing evaluation.
+## SINGLE CANONICAL PROFILE
+`src/signalgrid/scalping_profile.py` owns the shared configuration for:
+- Coin Sonar V2
+- Signal Hub
+- Risk
+- Execution
+- historical Sonar projection
 
-### Signal engine
-- Dedicated `ScalpingSignalEngine`.
-- 12-bar structure lookback plus quantified HH/HL vs LH/LL context.
-- Breakout/retest, liquidity-sweep rejection, breakout acceptance and compression-breakout classification.
-- NATR/expansion regime filter.
-- Directional taker-flow confirmation.
-- Live book/spread gate when live microstructure is available.
-- Absorption / price-impact gate.
-- Stop-distance bounds.
-- 3-second signal TTL.
-- No neutral grid emission.
+PAPER, historical validation and Demo must derive from this profile. CI fails if Coin Sonar is bypassed.
 
-### Quant validation
-- No-lookahead replay with next-bar-open execution.
-- Historical archive scope is explicitly `PRICE_ACTION_TAKER_ONLY`; unsupported historical order-book fields are not synthesized.
-- Base and stressed friction scenarios.
-- Net expectancy, hit rate, profit factor, drawdown and cost share.
-- MAE/MFE, holding time, initial stop distance and exit-reason diagnostics.
-- Setup and regime slices.
-- OOS checks and local parameter robustness.
-- Fail-closed `ScalpingValidationGate`.
-- Passing validation writes a profile-versioned local gate marker.
-- Demo runtime refuses missing, failed or stale gates.
+Profile version:
+`SCALPING_V1_20260919_R4_SONAR_LOCK`
 
-### Execution / Demo
-- Existing Binance execution, reconciliation and protective-order infrastructure reused.
-- Bounded scalping execution only; no infinite refill behavior.
-- Max 3 Demo positions.
-- 3x Demo leverage.
-- Dedicated Windows launchers remain available.
-- Demo secrets remain local in `.env`.
+## VERIFIED CHECKPOINTS
+- Python unit/CI suite passes on Python 3.11 / 3.12 / 3.13 at the last clean checkpoint.
+- Binance production WebSocket routing is split correctly:
+  - `/public`: bookTicker / public book data
+  - `/market`: aggTrade / kline
+- Runtime public-stream smoke has passed with live market events.
+- Canonical PAPER chain has completed a clean forward smoke:
+  - real Binance archived 1m warmup data
+  - live Binance public WebSocket events
+  - Coin Sonar V2 enabled
+  - Paper-only execution
+  - no API keys
+  - no open failures / halt / orphan-state / protection-gap failures
+- GitHub runner cannot use Binance production REST warmup because of runner location restrictions; CI uses checksum-verified Binance public archive warmup instead. Local PAPER keeps normal REST warmup by default.
 
-## EMPIRICAL RESULTS — 2026-09-19
-### 30-day BTC/ETH/SOL canonical profile
-- Quant gate: **FAIL**.
-- Validated symbols: none.
-- Base and OOS stressed expectancy were negative on all three symbols.
-- Parameter-neighborhood robustness: 0% positive.
-- Demo correctly remained locked.
+## HISTORICAL QUANT GATE
+Historical validation follows the same locked ordering:
+`Coin Sonar historical projection -> Signal Hub -> cost-stressed replay`
 
-### Diagnostic finding
-- Original small fixed TP was below a sensible round-trip cost margin.
-- Replay and execution now support a cost-aware TP floor.
-- Exit diagnostics show the dominant loss path is `INVALIDATION_STOP`; `MAX_HOLD` is also negative.
-- `TAKE_PROFIT` exits are positive individually, but occur too infrequently to offset stop/timeout losses.
-- Therefore fees alone are not the root cause; entry selectivity and exit geometry require improvement.
+Historical scope:
+`SONAR_PRICE_TAKER_NO_BOOK`
 
-### Research completed
-- 9-candidate stop-distance / score matrix: **0 passing candidates**.
-- 6-candidate reward/risk × holding-time matrix: **0 passing candidates**.
-- Best aggregate RR research region was 2.0R / 6 bars, but still negative after stressed costs across BTC/ETH/SOL.
-- No research candidate has been promoted into the canonical strategy.
+Historical book/spread fields are not fabricated. Historical Sonar uses real kline price + quote turnover/taker-flow with `BUCKET_TOTAL`; live spread/book gates remain forward-only evidence.
 
-### Setup / direction isolation result
-- 12-candidate setup × direction matrix: **0 passing candidates**.
-- The only interesting exploratory pocket was LONG `LIQUIDITY_SWEEP_REJECTION`:
-  - BTC OOS-stress expectancy +0.0504, PF 1.267, 9 trades.
-  - ETH OOS-stress expectancy +0.2036, PF 3.328, 8 trades.
-  - SOL OOS-stress expectancy -0.1312, PF 0.438, 27 trades.
-- Trade counts on BTC/ETH were too small for promotion and SOL contradicted the edge.
+The previous pre-Sonar empirical profile failed positive-expectancy gates. It is not evidence of profitability and cannot unlock Demo. The R4 Sonar-locked profile requires a fresh validation artifact.
 
-### Disjoint candidate test
-- The LONG liquidity-sweep pocket was frozen **before** a separate historical test.
-- Disjoint period: 60 days ending 2026-08-19, BTCUSDT + ETHUSDT.
-- Result: **REJECTED**.
-- BTC stress: 18 trades, expectancy -0.2158, PF 0.141.
-- ETH stress: 41 trades, expectancy -0.2621, PF 0.077.
-- Therefore the positive exploratory pocket did not generalize and is retired.
-
-### High-frequency research
-- Binance USD-M `aggTrades` pipeline is implemented and checksum-verified.
-- 1 day BTCUSDT successfully produced 17,280 continuous 5-second bars.
-- Three first-pass 5s profiles all had negative gross and net expectancy.
-- This confirms that simply shrinking the existing 1m logic to 5s does not create an edge.
-- Current research is a new microstructure hypothesis: liquidity sweep + aggressive-flow sign reversal (delta flip).
-
-## RESEARCH HYGIENE — LOCKED
-- The current 30-day BTC/ETH/SOL window is now **exploration data** because multiple hypotheses have been inspected against it.
-- No candidate discovered on this window may unlock Demo merely by passing this same window later.
-- Any promoted candidate must subsequently pass a **disjoint historical validation period** not used to select that candidate, then forward Demo testing.
-- Gate thresholds will not be loosened simply to force a PASS.
-- A failed empirical result is retained as evidence; it is not hidden or relabeled as success.
-
-## VALIDATION ORDER — LOCKED
-1. Unit/CI tests.
-2. Exploration research on the current 30-day BTC/ETH/SOL sample.
-3. Freeze a candidate only if cross-symbol evidence justifies it.
-4. Test the frozen candidate on a disjoint historical period.
-5. Require positive base + stressed expectancy, acceptable PF/drawdown/cost share and robustness.
-6. Only then unlock Binance Futures Demo.
-7. Demo soak/reconciliation/failure testing.
-8. Only after sufficient evidence consider very small live-capital validation.
+## PROMOTION ORDER
+1. CI + runtime/public-stream smoke PASS.
+2. Canonical forward PAPER chain PASS and accumulate sufficient telemetry.
+3. Fresh R4 historical cost-stressed validation PASS.
+4. Only then consider Binance Futures Demo.
+5. Demo soak/reconciliation/failure testing.
+6. Live capital remains out of scope until evidence supports it.
 
 ## CURRENT GATE
-**No profitable edge has been demonstrated yet. Binance Demo remains locked.**
+**No profitable edge has been demonstrated. Demo remains locked.**
 
-Active canonical path is now deliberately narrow:
-
-`Binance public market data -> Coin Sonar V2 -> Signal Hub -> Risk -> PAPER execution`
-
-The active validation runner is `RUN_SCALPING_PAPER.cmd`. It uses the locked architecture on forward live public data with **paper-only execution and no API keys**. Research-only matrices and abandoned hypothesis runners were removed from the active branch and preserved in `research-archive-20260919`.
-
-The historical quant gate remains useful as evidence for the Signal Hub profile, but it does **not** by itself validate the full Coin Sonar V2 runtime because the historical archive scope lacks the same live spread/order-book context. Therefore it cannot be used to bypass canonical forward PAPER validation.
-
-Next promotion gate:
-1. canonical PAPER chain must run cleanly and collect sufficient forward evidence;
-2. Coin Sonar wake -> Signal Hub -> Risk -> execution telemetry must be internally consistent;
-3. only then is a fresh Demo-unlock validation considered.
+Active work is now one system only. No new research matrix/workflow is added to `scalping-v1`; experiments, if ever reopened explicitly, belong on the archive/research branch.
