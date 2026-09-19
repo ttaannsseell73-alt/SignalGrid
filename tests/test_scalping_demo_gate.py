@@ -28,7 +28,7 @@ def test_demo_gate_accepts_current_passed_profile(tmp_path, monkeypatch):
     payload = {
         "gate_passed": True,
         "profile_version": SCALPING_PROFILE_VERSION,
-        "historical_microstructure_scope": "PRICE_ACTION_TAKER_ONLY",
+        "historical_microstructure_scope": "SONAR_PRICE_TAKER_NO_BOOK",
         "symbol": "BTCUSDT",
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
