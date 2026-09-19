@@ -206,3 +206,35 @@ def test_testnet_open_failure_persists_exact_diagnostic_without_forcing_halt(tmp
         assert "BTCUSDT" not in runtime._opening_symbols
 
     asyncio.run(scenario())
+
+
+def test_preloaded_real_warmup_skips_rest_loader(tmp_path):
+    async def scenario():
+        store = StateStore(tmp_path / "state.db")
+        router = BinanceMarketEventRouter()
+        state = router.state("SOLUSDT")
+        for i in range(60):
+            base = 100.0 + i * 0.01
+            state.add_bar(Bar(base, base + 0.2, base - 0.2, base + 0.05, 10.0))
+        public = DummyPublic()
+        warmup = DummyWarmup()
+        runtime = SignalGridRuntime(
+            RuntimeConfig(
+                RuntimeMode.PAPER,
+                ("SOLUSDT",),
+                str(tmp_path / "state.db"),
+                skip_rest_warmup=True,
+            ),
+            store=store,
+            router=router,
+            scanner=DummyScanner(),
+            public_transport=public,
+            warmup=warmup,
+            paper_broker=PaperGridBroker(),
+        )
+        await runtime.run(asyncio.Event())
+        assert warmup.calls == 0
+        assert public.calls == 1
+        assert store.get_runtime("warmup_source") == "PRELOADED_REAL_MARKET_DATA"
+
+    asyncio.run(scenario())
