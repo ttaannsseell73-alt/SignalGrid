@@ -8,7 +8,7 @@ from statistics import median
 from signalgrid.backtest.data import load_binance_klines_csv
 
 
-HORIZON_BARS = (3, 6, 12)  # 15s, 30s, 60s on 5s data
+HORIZON_BARS = (3, 6, 12, 24, 36, 60)  # 15s through 5m on 5s data
 BASE_ROUND_TRIP_COST_BPS = 12.5
 STRESS_ROUND_TRIP_COST_BPS = 23.0
 
