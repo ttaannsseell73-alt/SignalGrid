@@ -20,9 +20,16 @@ class ScalpingStructure:
     trigger_level: float | None
 
 
+@dataclass(frozen=True, slots=True)
+class MarketStructure:
+    bias: int
+    label: str
+
+
 @dataclass(slots=True)
 class ScalpingConfig:
     structure_lookback: int = 12
+    swing_window: int = 5
     compression_lookback: int = 8
     compression_baseline: int = 30
     compression_ratio_max: float = 0.78
@@ -33,6 +40,8 @@ class ScalpingConfig:
     min_expansion: float = 0.90
     strong_expansion: float = 1.35
     min_directional_flow: float = 0.03
+    absorption_flow_threshold: float = 0.35
+    min_flow_price_progress_natr: float = 0.08
     min_score: float = 0.62
     min_stop_bps: float = 3.0
     max_stop_bps: float = 120.0
@@ -58,6 +67,48 @@ def compression_ratio(
     if base_avg <= 0:
         return None
     return short_avg / base_avg
+
+
+def market_structure_bias(bars: list[Bar], window: int = 5) -> MarketStructure:
+    """Quantify HH/HL vs LH/LL using two adjacent closed-bar windows."""
+    if window < 2 or len(bars) < (2 * window + 1):
+        return MarketStructure(0, "STRUCTURE_WARMUP")
+    prior = bars[:-1]
+    older = prior[-2 * window:-window]
+    recent = prior[-window:]
+    older_hi = max(b.high for b in older)
+    older_lo = min(b.low for b in older)
+    recent_hi = max(b.high for b in recent)
+    recent_lo = min(b.low for b in recent)
+
+    if recent_hi > older_hi and recent_lo > older_lo:
+        return MarketStructure(+1, "HH_HL")
+    if recent_hi < older_hi and recent_lo < older_lo:
+        return MarketStructure(-1, "LH_LL")
+    return MarketStructure(0, "RANGE_TRANSITION")
+
+
+def price_impact_efficiency(
+    bars: list[Bar],
+    reference: float,
+    side: int,
+    natr_value: float,
+    taker_flow: float,
+) -> float | None:
+    """Signed price progress per unit of same-direction taker pressure.
+
+    Low efficiency under strong aggressive flow is an absorption warning.
+    """
+    if len(bars) < 2 or reference <= 0 or natr_value <= 0 or side not in (-1, 1):
+        return None
+    prior_close = bars[-2].close
+    if prior_close <= 0:
+        return None
+    signed_progress_natr = (
+        side * (reference - prior_close) / max(prior_close * natr_value, 1e-12)
+    )
+    directional_taker = max(0.0, side * taker_flow)
+    return signed_progress_natr / max(directional_taker, 0.05)
 
 
 def detect_scalping_structure(
@@ -171,6 +222,21 @@ class ScalpingSignalEngine:
         if directional_flow < self.cfg.min_directional_flow:
             return Signal.pass_signal(state.symbol, "SCALP_FLOW_NOT_CONFIRMED")
 
+        market_structure = market_structure_bias(bars, self.cfg.swing_window)
+        if (
+            structure.setup in {"BREAKOUT_ACCEPTANCE", "BREAKOUT_RETEST"}
+            and market_structure.bias not in (0, side)
+        ):
+            return Signal.pass_signal(state.symbol, "SCALP_STRUCTURE_CONFLICT")
+
+        impact_efficiency = price_impact_efficiency(bars, reference, side, nv, ti)
+        if (
+            side * ti >= self.cfg.absorption_flow_threshold
+            and impact_efficiency is not None
+            and impact_efficiency < self.cfg.min_flow_price_progress_natr
+        ):
+            return Signal.pass_signal(state.symbol, "SCALP_ABSORPTION")
+
         compression = compression_ratio(
             bars,
             self.cfg.compression_lookback,
@@ -197,6 +263,8 @@ class ScalpingSignalEngine:
         }.get(setup, 0.0)
 
         flow_score = min(1.0, max(0.0, directional_flow) / 0.35)
+        context_score = 1.0 if market_structure.bias == side else (0.65 if market_structure.bias == 0 else 0.35)
+        impact_score = 0.5 if impact_efficiency is None else min(1.0, max(0.0, impact_efficiency) / 0.50)
         expansion_score = min(
             1.0,
             max(0.0, (vx - self.cfg.min_expansion) / max(0.05, self.cfg.strong_expansion - self.cfg.min_expansion)),
@@ -212,11 +280,13 @@ class ScalpingSignalEngine:
         )
 
         strength = (
-            0.38 * structure_score
-            + 0.27 * flow_score
-            + 0.15 * expansion_score
+            0.30 * structure_score
+            + 0.22 * flow_score
+            + 0.14 * expansion_score
             + 0.10 * spread_score
-            + 0.10 * stop_quality
+            + 0.09 * stop_quality
+            + 0.10 * context_score
+            + 0.05 * impact_score
         )
         if strength < self.cfg.min_score:
             return Signal.pass_signal(state.symbol, "SCALP_LOW_SCORE")
@@ -227,7 +297,13 @@ class ScalpingSignalEngine:
             symbol=state.symbol,
             direction=direction,
             strength=round(strength, 4),
-            regime="SCALP_EXPANSION" if vx >= self.cfg.min_expansion else "SCALP_REVERSAL",
+            regime=(
+                "SCALP_TREND_EXPANSION"
+                if vx >= self.cfg.min_expansion and market_structure.bias == side
+                else "SCALP_EXPANSION"
+                if vx >= self.cfg.min_expansion
+                else "SCALP_REVERSAL"
+            ),
             setup=setup,
             invalidation=structure.invalidation,
             liquidity_ok=True,
