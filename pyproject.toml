@@ -7,7 +7,7 @@ name = "signalgrid"
 version = "0.1.0"
 description = "Event-driven Binance USD-M Futures signal and execution engine"
 requires-python = ">=3.11"
-dependencies = ["binance-sdk-derivatives-trading-usds-futures>=6.0.0"]
+dependencies = ["binance-sdk-derivatives-trading-usds-futures>=6.0.0", "websockets>=15,<17"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
