@@ -2,6 +2,7 @@ from signalgrid.backtest.data import HistoricalBar
 from signalgrid.backtest.engine import BacktestConfig, metrics_from_trades, SimulatedTrade
 from signalgrid.backtest.scalping_validation import (
     ScalpingValidationGate,
+    _compound_slice_metrics,
     _slice_metrics,
     run_scalping_validation,
     scalping_parameter_neighborhood,
@@ -53,6 +54,14 @@ def test_validation_slice_reports_setup_and_regime_dependence():
         "LIQUIDITY_SWEEP_REJECTION",
     }
     assert {x.key for x in by_regime} == {"SCALP_EXPANSION", "SCALP_REVERSAL"}
+
+    by_direction = _slice_metrics(trades, "direction")
+    by_setup_regime = _compound_slice_metrics(trades, "setup", "regime")
+    assert {x.key for x in by_direction} == {"LONG"}
+    assert {x.key for x in by_setup_regime} == {
+        "BREAKOUT_RETEST|SCALP_EXPANSION",
+        "LIQUIDITY_SWEEP_REJECTION|SCALP_REVERSAL",
+    }
 
 
 def test_validation_fails_closed_when_sample_has_no_trades():

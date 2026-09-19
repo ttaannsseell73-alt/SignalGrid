@@ -62,6 +62,8 @@ class ScalpingValidationReport:
     oos_stress: BacktestResult
     by_setup: tuple[SliceMetrics, ...]
     by_regime: tuple[SliceMetrics, ...]
+    by_direction: tuple[SliceMetrics, ...]
+    by_setup_regime: tuple[SliceMetrics, ...]
     by_exit_reason: tuple[SliceMetrics, ...]
     history_span_days: float
     oos_start_ms: int | None
@@ -85,10 +87,40 @@ def historical_scalping_engine(
     )
 
 
+def _slice_key(value) -> str:
+    raw = getattr(value, "value", value)
+    return str(raw or "UNKNOWN")
+
+
 def _slice_metrics(trades, attr: str) -> tuple[SliceMetrics, ...]:
     groups: dict[str, list] = {}
     for trade in trades:
-        key = str(getattr(trade, attr) or "UNKNOWN")
+        key = _slice_key(getattr(trade, attr))
+        groups.setdefault(key, []).append(trade)
+
+    out: list[SliceMetrics] = []
+    for key, items in sorted(groups.items()):
+        pnls = [float(t.net_pnl) for t in items]
+        wins = sum(1 for x in pnls if x > 0)
+        out.append(
+            SliceMetrics(
+                key=key,
+                trades=len(items),
+                win_rate=wins / len(items) if items else 0.0,
+                expectancy=mean(pnls) if pnls else 0.0,
+                avg_holding_bars=mean(float(t.holding_bars) for t in items) if items else 0.0,
+                avg_mae_usdt=mean(float(t.mae_usdt) for t in items) if items else 0.0,
+                avg_mfe_usdt=mean(float(t.mfe_usdt) for t in items) if items else 0.0,
+                avg_initial_stop_bps=mean(float(t.initial_stop_bps) for t in items) if items else 0.0,
+            )
+        )
+    return tuple(out)
+
+
+def _compound_slice_metrics(trades, *attrs: str) -> tuple[SliceMetrics, ...]:
+    groups: dict[str, list] = {}
+    for trade in trades:
+        key = "|".join(_slice_key(getattr(trade, attr)) for attr in attrs)
         groups.setdefault(key, []).append(trade)
 
     out: list[SliceMetrics] = []
@@ -348,6 +380,8 @@ def run_scalping_validation(
         oos_stress=oos_stress,
         by_setup=_slice_metrics(base.trades, "setup"),
         by_regime=_slice_metrics(base.trades, "regime"),
+        by_direction=_slice_metrics(base.trades, "direction"),
+        by_setup_regime=_compound_slice_metrics(base.trades, "setup", "regime"),
         by_exit_reason=_slice_metrics(base.trades, "exit_reason"),
         history_span_days=history_span_days,
         oos_start_ms=oos_start_ms,

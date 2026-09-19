@@ -70,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
             "robustness": asdict(report.robustness),
             "by_setup": [asdict(x) for x in report.by_setup],
             "by_regime": [asdict(x) for x in report.by_regime],
+            "by_direction": [asdict(x) for x in report.by_direction],
+            "by_setup_regime": [asdict(x) for x in report.by_setup_regime],
             "by_exit_reason": [asdict(x) for x in report.by_exit_reason],
         }
         if report.passed:
