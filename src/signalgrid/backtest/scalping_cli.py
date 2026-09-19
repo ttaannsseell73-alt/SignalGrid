@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict
+from pathlib import Path
 
 from signalgrid.backtest.data import (
     attach_book_snapshots,
@@ -14,6 +15,7 @@ from signalgrid.backtest.scalping_validation import (
     ScalpingValidationGate,
     run_scalping_validation,
 )
+from signalgrid.signals.scalping import SCALPING_PROFILE_VERSION
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-profit-factor", type=float, default=1.05)
     p.add_argument("--max-drawdown-pct", type=float, default=0.15)
     p.add_argument("--max-cost-share", type=float, default=0.70)
+    p.add_argument("--gate-output", help="Write a Demo unlock marker only when validation passes")
     args = p.parse_args(argv)
 
     bars = load_binance_klines_csv(args.klines, args.symbol)
@@ -69,6 +72,24 @@ def main(argv: list[str] | None = None) -> int:
         "by_regime": [asdict(x) for x in report.by_regime],
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
+    if report.passed and args.gate_output:
+        gate_path = Path(args.gate_output)
+        gate_path.parent.mkdir(parents=True, exist_ok=True)
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "gate_passed": True,
+                    "profile_version": SCALPING_PROFILE_VERSION,
+                    "symbol": args.symbol.upper(),
+                    "bars": len(bars),
+                    "base": asdict(report.base.metrics),
+                    "stress": asdict(report.stress.metrics),
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
     return 0 if report.passed else 2
 
 
