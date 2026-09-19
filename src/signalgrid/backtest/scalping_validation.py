@@ -102,6 +102,11 @@ def run_scalping_validation(
         slippage_bps=1.0,
         max_holding_bars=6,
         require_book=True,
+        take_profit_enabled=True,
+        tp_spacing_natr_multiplier=0.20,
+        tp_min_spacing_bps=4.0,
+        tp_max_spacing_bps=25.0,
+        tp_steps=1.2,
     )
     stress_cfg = BacktestConfig(
         starting_equity=10_000.0,
@@ -111,6 +116,11 @@ def run_scalping_validation(
         slippage_bps=3.0,
         max_holding_bars=6,
         require_book=True,
+        take_profit_enabled=True,
+        tp_spacing_natr_multiplier=0.20,
+        tp_min_spacing_bps=4.0,
+        tp_max_spacing_bps=25.0,
+        tp_steps=1.2,
     )
 
     base = run_backtest(
