@@ -1,6 +1,7 @@
 from signalgrid.market.state import Bar, SymbolState
 from signalgrid.models import Direction, GridMode
 from signalgrid.signals.engine import SignalEngine
+from signalgrid.signals.structure import detect_structure
 
 def make_state(direction: int = 1) -> SymbolState:
     s = SymbolState("SOLUSDT")
@@ -54,3 +55,16 @@ def test_balanced_compressed_range_emits_neutral_grid():
     assert sig.setup == "RANGE_NEUTRAL"
     assert sig.regime == "RANGE"
     assert sig.strength >= 0.55
+
+
+def test_directional_signal_with_too_close_stop_is_rejected_before_execution():
+    s = make_state(1)
+    structure = detect_structure(list(s.bars), 20)
+    assert structure.invalidation is not None
+    midpoint = structure.invalidation * 1.0001
+    s.best_bid = midpoint - 0.0005
+    s.best_ask = midpoint + 0.0005
+    sig = SignalEngine().evaluate(s)
+    assert sig.direction is Direction.PASS
+    assert sig.grid_mode is GridMode.PASS
+    assert sig.setup == "STOP_TOO_CLOSE"

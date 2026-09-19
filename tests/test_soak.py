@@ -81,3 +81,14 @@ def test_soak_journal_round_trip(tmp_path):
     rows = load_samples(path)
     assert [row.timestamp_ms for row in rows] == [1000, 2000]
     assert rows[0].health["healthy"] is True
+
+
+def test_soak_duration_allows_only_millisecond_timestamp_quantization():
+    first = SoakSample(1_000, _health().to_dict())
+    quantized = SoakSample(1_998, _health().to_dict())
+    report = evaluate_soak([first, quantized], 1, max_gap_seconds=2)
+    assert report.passed
+
+    materially_short = SoakSample(1_980, _health().to_dict())
+    report = evaluate_soak([first, materially_short], 1, max_gap_seconds=2)
+    assert not report.passed

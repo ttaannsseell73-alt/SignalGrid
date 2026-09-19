@@ -62,6 +62,7 @@ DEMO_SIGNAL_CONFIG = SignalConfig(
     min_flow_abs=0.05,
     min_book_abs=0.03,
     entry_threshold=0.52,
+    min_directional_stop_bps=3.0,
     neutral_enabled=True,
     neutral_max_expansion=1.00,
     neutral_max_flow_abs=0.15,
@@ -426,6 +427,7 @@ def build_demo_runtime(symbols: tuple[str, ...], db_path: str) -> tuple[SignalGr
             "min_flow_abs": DEMO_SIGNAL_CONFIG.min_flow_abs,
             "min_book_abs": DEMO_SIGNAL_CONFIG.min_book_abs,
             "entry_threshold": DEMO_SIGNAL_CONFIG.entry_threshold,
+            "min_directional_stop_bps": DEMO_SIGNAL_CONFIG.min_directional_stop_bps,
         }, sort_keys=True),
     )
     return runtime, reflex
@@ -518,6 +520,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 "min_flow_abs": DEMO_SIGNAL_CONFIG.min_flow_abs,
                 "min_book_abs": DEMO_SIGNAL_CONFIG.min_book_abs,
                 "entry_threshold": DEMO_SIGNAL_CONFIG.entry_threshold,
+                "min_directional_stop_bps": DEMO_SIGNAL_CONFIG.min_directional_stop_bps,
                 "neutral_enabled": DEMO_SIGNAL_CONFIG.neutral_enabled,
                 "neutral_max_expansion": DEMO_SIGNAL_CONFIG.neutral_max_expansion,
                 "neutral_max_flow_abs": DEMO_SIGNAL_CONFIG.neutral_max_flow_abs,

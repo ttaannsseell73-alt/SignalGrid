@@ -16,6 +16,7 @@ class SignalConfig:
     min_flow_abs: float = 0.08
     min_book_abs: float = 0.05
     entry_threshold: float = 0.60
+    min_directional_stop_bps: float = 3.0
     neutral_enabled: bool = True
     neutral_max_expansion: float = 1.00
     neutral_max_flow_abs: float = 0.12
@@ -76,7 +77,29 @@ class SignalEngine:
             )
         if vx < self.cfg.min_expansion:
             return Signal.pass_signal(state.symbol, "NO_VOL_EXPANSION")
+        reference = None
+        if (
+            state.best_bid is not None
+            and state.best_ask is not None
+            and state.best_bid > 0
+            and state.best_ask >= state.best_bid
+        ):
+            reference = (state.best_bid + state.best_ask) / 2.0
+        elif bars and bars[-1].close > 0:
+            reference = bars[-1].close
+        if reference is None or structure.invalidation is None or structure.invalidation <= 0:
+            return Signal.pass_signal(state.symbol, "NO_INVALIDATION")
         side = structure.direction
+        if side > 0:
+            if structure.invalidation >= reference:
+                return Signal.pass_signal(state.symbol, "INVALIDATION_WRONG_SIDE")
+            stop_distance_bps = (reference - structure.invalidation) / reference * 10_000.0
+        else:
+            if structure.invalidation <= reference:
+                return Signal.pass_signal(state.symbol, "INVALIDATION_WRONG_SIDE")
+            stop_distance_bps = (structure.invalidation - reference) / reference * 10_000.0
+        if stop_distance_bps < self.cfg.min_directional_stop_bps:
+            return Signal.pass_signal(state.symbol, "STOP_TOO_CLOSE")
         flow_support = max(0.0, side * ti)
         book_support = max(0.0, side * bi)
         struct_score = 1.0

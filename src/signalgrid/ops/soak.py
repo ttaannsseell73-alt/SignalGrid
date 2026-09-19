@@ -114,9 +114,13 @@ def evaluate_soak(
             except (TypeError, ValueError):
                 unhealthy += 1
 
+    # Journal timestamps are integer milliseconds, so a session that waits the
+    # full monotonic duration can appear a few milliseconds short after wall-clock
+    # quantization. Allow only a 10 ms coverage epsilon; material shortfalls still fail.
+    coverage_epsilon_seconds = 0.010
     passed = (
         len(rows) >= 2
-        and observed_seconds >= required_seconds
+        and observed_seconds + coverage_epsilon_seconds >= required_seconds
         and gap_violations == 0
         and unhealthy == 0
         and halted == 0
