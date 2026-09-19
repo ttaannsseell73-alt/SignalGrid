@@ -8,6 +8,22 @@
 - No live-capital mode is enabled.
 - Binance Demo remains locked until the quant gate genuinely passes.
 
+## LOCKED COIN SONAR V2
+- Coin Sonar V2 is **Impulse Radar only**.
+- It is not a trade signal, not a separate strategy, not a new hub and never bypasses Risk.
+- Locked placement:
+  `Market Data Hub -> Impulse Radar wake event -> existing Signal Hub -> VOL + STRUCTURE + FLOW -> RISK -> GRID`.
+- Inputs:
+  - short-horizon price impulse,
+  - adaptive symbol/time-normalized quote turnover,
+  - taker buy/sell imbalance,
+  - spread/liquidity,
+  - persistence / acceleration.
+- Fixed ~$24K turnover is forbidden. Turnover is adaptive per symbol and time window.
+- Persistence context includes impulse count, time-between-impulses, cumulative displacement and cumulative turnover.
+- Radar output is only symbol wake/event context. LONG/SHORT decisions remain inside the existing Signal Hub.
+- Current implementation uses locked price-impulse reference tiers: <=1m ~0.5%, 3-5m ~1.5%, 5-10m ~1.8%, ~15m ~2.0%, behind adaptive turnover and spread gates.
+
 ## LOCKED STRATEGY RULES
 - Classic RSI/MACD/Stochastic/EMA-cross stacks are not the primary decision engine.
 - Primary signal layer is quantified Price Action:
@@ -28,6 +44,14 @@
 - Reconciliation is fail-closed.
 
 ## IMPLEMENTED CHECKPOINT
+### Coin Sonar / Impulse Radar
+- `src/signalgrid/sonar/impulse_radar.py` implemented.
+- Adaptive turnover baseline uses rolling per-symbol quote-rate normalization; no fixed dollar threshold.
+- Tracks persistence/acceleration, impulse count, gaps, cumulative displacement and turnover.
+- `MultiSymbolScanner` can sleep the Signal Hub with `IMPULSE_RADAR_SLEEP`.
+- Canonical scalping Demo scanner now has `ImpulseRadar()` wired before Signal Hub evaluation.
+- Radar emits no trade direction into execution; it only wakes existing evaluation.
+
 ### Signal engine
 - Dedicated `ScalpingSignalEngine`.
 - 12-bar structure lookback plus quantified HH/HL vs LH/LL context.
