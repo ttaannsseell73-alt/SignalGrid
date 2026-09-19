@@ -46,6 +46,7 @@ class RuntimeConfig:
     cleanup_interval_seconds: float = 1.0
     cleanup_grace_seconds: float = 5.0
     warmup_bars: int = 60
+    skip_rest_warmup: bool = False
 
     def __post_init__(self) -> None:
         if not self.symbols:
@@ -216,7 +217,20 @@ class SignalGridRuntime:
         symbols = self.scanner.configure_symbols(self.config.symbols)
         self.store.set_runtime("runtime_mode", self.config.mode.value)
         self.store.set_runtime("runtime_status", "WARMING_UP")
-        await self.warmup.load(symbols)
+        if self.config.skip_rest_warmup:
+            missing = [
+                symbol
+                for symbol in symbols
+                if len(self.router.state(symbol).bars) < self.config.warmup_bars
+            ]
+            if missing:
+                raise RuntimeError(
+                    "PRELOADED_WARMUP_INCOMPLETE:" + ",".join(missing)
+                )
+            self.store.set_runtime("warmup_source", "PRELOADED_REAL_MARKET_DATA")
+        else:
+            await self.warmup.load(symbols)
+            self.store.set_runtime("warmup_source", "BINANCE_REST")
         self.store.set_runtime("runtime_status", "STARTING")
 
         if self.config.mode is RuntimeMode.PAPER:
