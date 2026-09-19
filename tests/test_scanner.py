@@ -73,9 +73,6 @@ class NeverWakeRadar:
     def observe(self, state, now_ms):
         return None
 
-    def is_awake(self, symbol, now_ms):
-        return False
-
 
 def test_impulse_radar_can_keep_signal_hub_asleep():
     now = [1_000_000]
@@ -85,33 +82,3 @@ def test_impulse_radar_can_keep_signal_hub_asleep():
     assert result is not None
     assert not result.emitted
     assert result.reason == "IMPULSE_RADAR_SLEEP"
-
-
-class WakeOnceRadar:
-    def __init__(self):
-        self.woke = False
-
-    def observe(self, state, now_ms):
-        if not self.woke:
-            self.woke = True
-            return object()
-        return None
-
-    def is_awake(self, symbol, now_ms):
-        return self.woke
-
-
-def test_impulse_wake_persistence_keeps_signal_hub_active():
-    now = [1_000_000]
-    s = scanner(now)
-    s.impulse_radar = WakeOnceRadar()
-
-    first = s.on_event(EventResult("SOLUSDT", "aggTrade", True))
-    assert first is not None
-    assert first.emitted
-
-    now[0] += 150
-    s.router.state("SOLUSDT").last_event_time_ms = now[0]
-    second = s.on_event(EventResult("SOLUSDT", "bookTicker", True))
-    assert second is not None
-    assert second.reason == "SIGNAL_DEBOUNCE"

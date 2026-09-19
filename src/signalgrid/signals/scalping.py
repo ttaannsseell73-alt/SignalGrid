@@ -260,6 +260,12 @@ class ScalpingSignalEngine:
         ):
             setup = "COMPRESSION_BREAKOUT"
 
+        # Cross-symbol empirical validation showed unconfirmed raw breakout
+        # acceptance was consistently negative after costs. Require either
+        # compression context or a completed retest before directional entry.
+        if setup == "BREAKOUT_ACCEPTANCE":
+            return Signal.pass_signal(state.symbol, "SCALP_BREAKOUT_NEEDS_CONFIRMATION")
+
         # Sweeps/retests can work before broad volatility expansion; raw
         # breakout acceptance must show at least modest expansion.
         if setup in {"BREAKOUT_ACCEPTANCE", "COMPRESSION_BREAKOUT"} and vx < self.cfg.min_expansion:

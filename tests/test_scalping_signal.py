@@ -179,3 +179,22 @@ def test_historical_mode_does_not_fabricate_missing_book_microstructure():
     ).evaluate(s)
     assert historical_sig.direction is Direction.LONG
     assert historical_sig.grid_mode is GridMode.LONG_GRID
+
+
+def test_scalping_engine_rejects_raw_breakout_without_confirmation():
+    s = _base_state()
+    prior_high = max(b.high for b in list(s.bars)[-12:])
+    reference = prior_high + 0.30
+    s.add_bar(Bar(100.0, reference + 0.10, 99.95, reference, 2000))
+    s.best_bid, s.best_ask = reference - 0.005, reference + 0.005
+    s.taker_buy_quote, s.taker_sell_quote = 80.0, 20.0
+    s.bid_depth, s.ask_depth = 70.0, 30.0
+
+    cfg = ScalpingConfig(
+        min_score=0.50,
+        max_stop_bps=200.0,
+        compression_ratio_max=0.0,
+    )
+    sig = ScalpingSignalEngine(cfg).evaluate(s)
+    assert sig.direction is Direction.PASS
+    assert sig.setup == "SCALP_BREAKOUT_NEEDS_CONFIRMATION"

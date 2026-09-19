@@ -103,32 +103,3 @@ def test_historical_bucket_turnover_mode_does_not_require_fake_spread():
     event = radar.observe(s, 4 * 60_000)
     assert event is not None
     assert event.spread_bps == -1.0
-
-
-def test_wake_persists_for_shortest_impulse_window_only():
-    cfg = ImpulseRadarConfig(
-        windows=(ImpulseWindow(10_000, 20.0), ImpulseWindow(30_000, 40.0)),
-        min_baseline_seconds=5,
-        turnover_baseline_seconds=20,
-        min_turnover_ratio=1.20,
-        max_spread_bps=10.0,
-        sample_interval_ms=1_000,
-        wake_cooldown_ms=1_000,
-    )
-    radar = ImpulseRadar(cfg)
-    s = _state()
-
-    for second in range(0, 11):
-        s.taker_buy_quote = second * 6.0
-        s.taker_sell_quote = second * 4.0
-        radar.observe(s, second * 1_000)
-
-    s.taker_buy_quote += 250.0
-    s.taker_sell_quote += 50.0
-    s.best_bid = 100.39
-    s.best_ask = 100.41
-    assert radar.observe(s, 11_000) is not None
-
-    assert radar.is_awake("BTCUSDT", 11_000)
-    assert radar.is_awake("btcusdt", 21_000)
-    assert not radar.is_awake("BTCUSDT", 21_001)

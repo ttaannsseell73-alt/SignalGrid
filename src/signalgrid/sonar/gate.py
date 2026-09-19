@@ -25,8 +25,7 @@ class SonarGatedSignalEngine:
     def evaluate(self, state: SymbolState) -> Signal:
         now_ms = int(state.last_event_time_ms or 0)
         wake = self.impulse_radar.observe(state, now_ms)
-        if wake is not None:
-            self.last_event[state.symbol] = wake
-        elif not self.impulse_radar.is_awake(state.symbol, now_ms):
+        if wake is None:
             return Signal.pass_signal(state.symbol, "IMPULSE_RADAR_SLEEP")
+        self.last_event[state.symbol] = wake
         return self.signal_engine.evaluate(state)

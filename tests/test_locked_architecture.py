@@ -44,8 +44,6 @@ def test_historical_quant_path_is_also_sonar_gated():
 
     engine = historical_scalping_engine(SCALPING_SIGNAL_CONFIG)
     assert isinstance(engine, SonarGatedSignalEngine)
-    gate_source = inspect.getsource(SonarGatedSignalEngine.evaluate)
-    assert "self.impulse_radar.is_awake" in gate_source
     assert engine.impulse_radar.config is SCALPING_HISTORICAL_SONAR_CONFIG
     assert engine.impulse_radar.config.turnover_mode == "BUCKET_TOTAL"
     assert engine.impulse_radar.config.require_spread is False
