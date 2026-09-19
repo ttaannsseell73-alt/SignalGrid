@@ -115,11 +115,6 @@ def build_grid_plan(
     if volatility is None or volatility <= 0:
         raise GridPlanError("NATR warmup is incomplete")
     reference = _reference_price(state)
-    side = 1 if signal.direction is Direction.LONG else -1
-    if side > 0 and signal.invalidation >= reference:
-        raise GridPlanError("LONG invalidation must be below reference price")
-    if side < 0 and signal.invalidation <= reference:
-        raise GridPlanError("SHORT invalidation must be above reference price")
 
     spacing_bps = min(
         cfg.max_spacing_bps,
@@ -160,6 +155,12 @@ def build_grid_plan(
             neutral_short_take_profit=reference,
             expires_at_ms=event_ms + int(cfg.neutral_ttl_seconds * 1000),
         )
+
+    side = 1 if signal.direction is Direction.LONG else -1
+    if side > 0 and signal.invalidation >= reference:
+        raise GridPlanError("LONG invalidation must be below reference price")
+    if side < 0 and signal.invalidation <= reference:
+        raise GridPlanError("SHORT invalidation must be above reference price")
 
     starter = total * cfg.starter_fraction
     remaining = total - starter
