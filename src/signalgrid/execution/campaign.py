@@ -211,6 +211,11 @@ class GridCampaignExecutor:
         self.registry = registry or GridCampaignRegistry(store)
 
     async def open_campaign(self, plan: GridPlan) -> GridOpenResult:
+        if plan.mode is GridMode.NEUTRAL_GRID:
+            return await self._open_neutral(plan)
+        return await self._open_directional(plan)
+
+    async def _open_directional(self, plan: GridPlan) -> GridOpenResult:
         record = self.registry.prepare(plan)
         starter_receipt = None
         stop_placed = False
@@ -231,9 +236,6 @@ class GridCampaignExecutor:
                 f"{plan.campaign_id}:tp",
                 order_type="TAKE_PROFIT_MARKET",
             )
-            # Validate both protective triggers against the latest contract price
-            # before creating any exposure. The adapter validates again at submit
-            # time to close the race as much as possible.
             self.adapter.validate_protective_exit(stop_intent)
             self.adapter.validate_protective_exit(take_profit_intent)
             starter_receipt = await self.adapter.place_entry_receipt(
@@ -288,13 +290,179 @@ class GridCampaignExecutor:
             self.store.halt(f"GRID_OPEN_DEGRADED:{plan.symbol}")
             raise GridCampaignError("grid open degraded after protective stop; new entries halted") from exc
 
+    async def _open_neutral(self, plan: GridPlan) -> GridOpenResult:
+        record = self.registry.prepare(plan)
+        placed: list[tuple[str, str]] = []
+        try:
+            for level in plan.entries:
+                if level.kind != "LIMIT" or level.direction not in (Direction.LONG, Direction.SHORT):
+                    raise GridCampaignError("neutral grid contains invalid entry")
+                receipt = await self.adapter.place_limit_entry_receipt(
+                    LimitEntryIntent(
+                        plan.symbol,
+                        level.direction,
+                        level.notional_usdt,
+                        level.price,
+                        f"{plan.campaign_id}:level:{level.index}",
+                    )
+                )
+                placed.append((receipt.client_order_id, receipt.exchange_order_id))
+            record = self.registry.set_status(plan.symbol, "ACTIVE")
+            return GridOpenResult(record, "", tuple(order_id for _, order_id in placed))
+        except Exception as exc:
+            position = self.store.get_account_position(plan.symbol)
+            if position is None or position.quantity == 0:
+                for _, order_id in placed:
+                    if not order_id:
+                        continue
+                    try:
+                        await self.adapter.cancel_order(plan.symbol, order_id)
+                    except BinanceOrderNotFoundError:
+                        pass
+                    except Exception:
+                        self.store.halt(f"NEUTRAL_GRID_PARTIAL_OPEN_CLEANUP_FAILED:{plan.symbol}")
+                        self.registry.set_status(plan.symbol, "DEGRADED")
+                        raise GridCampaignError("neutral grid partial-open cleanup failed") from exc
+                self.registry.set_status(plan.symbol, "FAILED")
+                raise GridCampaignError("neutral grid open failed before exposure") from exc
+
+            direction = Direction.LONG if position.direction == Direction.LONG.value else Direction.SHORT
+            try:
+                await self.adapter.place_reduce_only_market(
+                    ReduceOnlyMarketIntent(
+                        plan.symbol,
+                        direction,
+                        position.quantity,
+                        f"{plan.campaign_id}:neutral-open-emergency-close",
+                    )
+                )
+            except Exception:
+                self.registry.set_status(plan.symbol, "DEGRADED")
+                self.store.halt(f"NEUTRAL_GRID_UNPROTECTED_POSITION:{plan.symbol}")
+                raise GridCampaignError("neutral grid open failed with live exposure and emergency close failed") from exc
+            self.registry.set_status(plan.symbol, "FAILED")
+            self.store.halt(f"NEUTRAL_GRID_PARTIAL_FILL_DURING_OPEN:{plan.symbol}")
+            raise GridCampaignError("neutral grid partially filled while opening; exposure emergency-closed") from exc
+
+    def _neutral_protection(self, record: GridCampaignRecord, direction: Direction) -> tuple[float, float]:
+        if direction is Direction.LONG:
+            stop = record.neutral_long_invalidation
+            take_profit = record.neutral_long_take_profit
+        else:
+            stop = record.neutral_short_invalidation
+            take_profit = record.neutral_short_take_profit
+        if stop is None or take_profit is None or stop <= 0 or take_profit <= 0:
+            raise GridCampaignStateError(f"neutral protection missing for {record.symbol}:{direction.value}")
+        return stop, take_profit
+
+    async def _cancel_neutral_opposite_entries(self, record: GridCampaignRecord, direction: Direction) -> None:
+        keep_side = "BUY" if direction is Direction.LONG else "SELL"
+        for cid in record.limit_client_ids:
+            order = self.store.get_order(cid)
+            if order is None or order.status not in ACTIVE_ORDER_STATUSES:
+                continue
+            if order.side == keep_side or not order.exchange_order_id:
+                continue
+            try:
+                await self.adapter.cancel_order(record.symbol, order.exchange_order_id)
+            except BinanceOrderNotFoundError:
+                continue
+
+    async def _emergency_close_position(
+        self,
+        record: GridCampaignRecord,
+        direction: Direction,
+        quantity,
+        suffix: str,
+    ) -> None:
+        await self.adapter.place_reduce_only_market(
+            ReduceOnlyMarketIntent(
+                record.symbol,
+                direction,
+                quantity,
+                f"{record.campaign_id}:{suffix}",
+            )
+        )
+
+    async def _activate_neutral_position(self, record: GridCampaignRecord) -> GridCampaignRecord:
+        position = self.store.get_account_position(record.symbol)
+        if position is None or position.quantity == 0:
+            return record
+        direction = Direction.LONG if position.direction == Direction.LONG.value else Direction.SHORT
+
+        if record.activated:
+            if record.direction != direction.value:
+                try:
+                    await self._emergency_close_position(record, direction, position.quantity, "direction-flip-close")
+                finally:
+                    self.registry.set_status(record.symbol, "DEGRADED")
+                    self.store.halt(f"NEUTRAL_GRID_DIRECTION_FLIP:{record.symbol}")
+                raise GridCampaignError(f"neutral grid direction flipped unexpectedly for {record.symbol}")
+            await self._cancel_neutral_opposite_entries(record, direction)
+            return record
+
+        stop_price, take_profit_price = self._neutral_protection(record, direction)
+        stop_intent = ProtectiveExitIntent(
+            record.symbol,
+            direction,
+            stop_price,
+            f"{record.campaign_id}:stop",
+            order_type="STOP_MARKET",
+        )
+        take_profit_intent = ProtectiveExitIntent(
+            record.symbol,
+            direction,
+            take_profit_price,
+            f"{record.campaign_id}:tp",
+            order_type="TAKE_PROFIT_MARKET",
+        )
+        stop_placed = False
+        try:
+            self.adapter.validate_protective_exit(stop_intent)
+            self.adapter.validate_protective_exit(take_profit_intent)
+            await self.adapter.place_protective_exit(stop_intent)
+            stop_placed = True
+            await self.adapter.place_protective_exit(take_profit_intent)
+            await self._cancel_neutral_opposite_entries(record, direction)
+            return self.registry.activate_neutral(record.symbol, direction)
+        except Exception as exc:
+            if not stop_placed:
+                try:
+                    await self._emergency_close_position(
+                        record,
+                        direction,
+                        position.quantity,
+                        "neutral-protection-emergency-close",
+                    )
+                except Exception:
+                    self.registry.set_status(record.symbol, "DEGRADED")
+                    self.store.halt(f"NEUTRAL_GRID_UNPROTECTED_POSITION:{record.symbol}")
+                    raise GridCampaignError("neutral position protection and emergency close both failed") from exc
+                self.registry.set_status(record.symbol, "FAILED")
+                self.store.halt(f"NEUTRAL_GRID_PROTECTION_FAILED:{record.symbol}")
+                raise GridCampaignError("neutral position protection failed; exposure emergency-closed") from exc
+            self.registry.set_status(record.symbol, "DEGRADED")
+            self.store.halt(f"NEUTRAL_GRID_OPEN_DEGRADED:{record.symbol}")
+            raise GridCampaignError("neutral position degraded after protective stop") from exc
+
     async def cleanup_if_flat(self, symbol: str) -> bool:
         record = self.registry.active(symbol)
         if record is None:
             return False
         position = self.store.get_account_position(record.symbol)
+
+        if record.mode == GridMode.NEUTRAL_GRID.value:
+            if position is not None and position.quantity != 0:
+                await self._activate_neutral_position(record)
+                return False
+            if not record.activated:
+                # Armed two-sided neutral campaign has no exposure and therefore
+                # intentionally has no STOP/TP yet.
+                return False
+
         if position is not None and position.quantity != 0:
             return False
+
         pending_exchange_convergence = False
         try:
             for cid in record.limit_client_ids:
@@ -331,9 +499,28 @@ class GridCampaignExecutor:
             if record.status not in ACTIVE_CAMPAIGN_STATUSES:
                 continue
             position = self.store.get_account_position(record.symbol)
-            if position is None or position.quantity == 0:
+
+            if record.mode == GridMode.NEUTRAL_GRID.value:
+                if position is None or position.quantity == 0:
+                    if record.activated:
+                        await self.cleanup_if_flat(record.symbol)
+                    else:
+                        self.registry.set_status(record.symbol, "ACTIVE")
+                    continue
+                if not record.activated:
+                    record = await self._activate_neutral_position(record)
+                else:
+                    direction = Direction.LONG if position.direction == Direction.LONG.value else Direction.SHORT
+                    if record.direction != direction.value:
+                        self.registry.set_status(record.symbol, "DEGRADED")
+                        self.store.halt(f"NEUTRAL_GRID_DIRECTION_FLIP:{record.symbol}")
+                        raise GridCampaignError(f"neutral grid direction mismatch for {record.symbol}")
+                    await self._cancel_neutral_opposite_entries(record, direction)
+
+            elif position is None or position.quantity == 0:
                 await self.cleanup_if_flat(record.symbol)
                 continue
+
             stop = self.store.get_algo_order(record.stop_client_id)
             tp = self.store.get_algo_order(record.take_profit_client_id)
             if stop is None or stop.status not in ACTIVE_ALGO_STATUSES:
@@ -345,3 +532,4 @@ class GridCampaignExecutor:
                 self.store.halt(f"GRID_RECOVERY_MISSING_TP:{record.symbol}")
                 raise GridCampaignError(f"active position lacks active take-profit for {record.symbol}")
             self.registry.set_status(record.symbol, "ACTIVE")
+
