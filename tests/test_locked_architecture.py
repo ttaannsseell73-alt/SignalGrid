@@ -36,7 +36,7 @@ def test_locked_coin_sonar_is_adaptive_not_fixed_dollar_threshold():
 def test_project_state_declares_coin_sonar_v2_locked():
     text = Path("PROJECT_STATE.md").read_text(encoding="utf-8")
     assert "## LOCKED COIN SONAR V2" in text
-    assert "Market Data Hub -> Impulse Radar wake event -> existing Signal Hub" in text
+    assert "Market Data Hub -> Coin Sonar V2 / Impulse Radar -> existing Signal Hub" in text
 
 
 def test_historical_quant_path_is_also_sonar_gated():
