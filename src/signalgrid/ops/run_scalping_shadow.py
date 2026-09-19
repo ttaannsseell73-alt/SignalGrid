@@ -13,7 +13,7 @@ from typing import Any
 import websockets
 
 
-FSTREAM_BASE = "wss://fstream.binance.com/stream?streams="
+FSTREAM_BASE = "wss://fstream.binance.com/ws"
 
 
 def _imbalance(bid: float, ask: float) -> float:
@@ -237,7 +237,7 @@ class ShadowStore:
         self.conn.close()
 
 
-def combined_stream_url(symbols: tuple[str, ...]) -> str:
+def subscription_names(symbols: tuple[str, ...]) -> list[str]:
     streams: list[str] = []
     for symbol in symbols:
         s = symbol.lower()
@@ -248,7 +248,18 @@ def combined_stream_url(symbols: tuple[str, ...]) -> str:
                 f"{s}@depth20@100ms",
             ]
         )
-    return FSTREAM_BASE + "/".join(streams)
+    return streams
+
+
+def _stream_name_for_event(symbol: str, event: str) -> str:
+    s = symbol.lower()
+    if event == "aggTrade":
+        return f"{s}@aggTrade"
+    if event == "bookTicker":
+        return f"{s}@bookTicker"
+    if event == "depthUpdate":
+        return f"{s}@depth20@100ms"
+    return f"{s}@{event or 'unknown'}"
 
 
 async def record_shadow(
@@ -261,7 +272,7 @@ async def record_shadow(
         raise ValueError("duration_seconds must be positive")
     store = ShadowStore(db_path)
     acc = {symbol: ShadowAccumulator(symbol) for symbol in symbols}
-    url = combined_stream_url(symbols)
+    subscriptions = subscription_names(symbols)
     started = time.monotonic()
     messages = 0
     event_counts: dict[str, int] = {}
@@ -269,12 +280,21 @@ async def record_shadow(
 
     try:
         async with websockets.connect(
-            url,
+            FSTREAM_BASE,
             ping_interval=20,
             ping_timeout=20,
             close_timeout=10,
             max_size=4 * 1024 * 1024,
         ) as ws:
+            await ws.send(
+                json.dumps(
+                    {
+                        "method": "SUBSCRIBE",
+                        "params": subscriptions,
+                        "id": 1,
+                    }
+                )
+            )
             while time.monotonic() - started < duration_seconds:
                 remaining = duration_seconds - (time.monotonic() - started)
                 if remaining <= 0:
@@ -284,14 +304,17 @@ async def record_shadow(
                 except asyncio.TimeoutError:
                     continue
                 payload = json.loads(raw)
-                stream_name = str(payload.get("stream", "raw"))
-                stream_counts[stream_name] = stream_counts.get(stream_name, 0) + 1
+                # Subscription acknowledgements have no symbol/event payload.
+                if payload.get("id") == 1 and "result" in payload:
+                    continue
                 data = payload.get("data", payload)
                 symbol = str(data.get("s", "")).upper()
                 if symbol not in acc:
                     continue
                 event = str(data.get("e") or "unknown")
                 event_counts[event] = event_counts.get(event, 0) + 1
+                stream_name = _stream_name_for_event(symbol, event)
+                stream_counts[stream_name] = stream_counts.get(stream_name, 0) + 1
                 event_ms = int(data.get("E") or data.get("T") or int(time.time() * 1000))
                 row = None
                 if event == "aggTrade":
