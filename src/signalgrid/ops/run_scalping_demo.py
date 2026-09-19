@@ -20,7 +20,11 @@ from signalgrid.ops.run_soak import run_soak_session
 from signalgrid.risk.engine import RiskConfig, RiskEngine
 from signalgrid.runtime import RuntimeConfig, RuntimeMode, SignalGridRuntime
 from signalgrid.scanner import MultiSymbolScanner, ScannerConfig
-from signalgrid.signals.scalping import ScalpingConfig, ScalpingSignalEngine
+from signalgrid.signals.scalping import (
+    SCALPING_PROFILE_VERSION,
+    ScalpingConfig,
+    ScalpingSignalEngine,
+)
 
 
 DEFAULT_SCALPING_SYMBOLS = (
@@ -71,10 +75,28 @@ def _parse_symbols(text: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(x.strip().upper() for x in text.split(",") if x.strip()))
 
 
+def _require_validation_gate() -> dict:
+    gate_path = Path(os.getenv("SIGNALGRID_SCALPING_GATE", "validation/scalping_gate.json"))
+    if not gate_path.exists():
+        raise RuntimeError(
+            "SCALPING_QUANT_GATE_MISSING: run scalping validation before Binance Demo"
+        )
+    try:
+        payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("SCALPING_QUANT_GATE_INVALID") from exc
+    if payload.get("gate_passed") is not True:
+        raise RuntimeError("SCALPING_QUANT_GATE_FAILED")
+    if payload.get("profile_version") != SCALPING_PROFILE_VERSION:
+        raise RuntimeError("SCALPING_QUANT_GATE_STALE_PROFILE")
+    return payload
+
+
 def build_scalping_demo_runtime(
     symbols: tuple[str, ...],
     db_path: str,
 ) -> SignalGridRuntime:
+    gate_payload = _require_validation_gate()
     api_key = os.getenv("BINANCE_DEMO_API_KEY", "").strip()
     api_secret = os.getenv("BINANCE_DEMO_API_SECRET", "").strip()
     if not api_key or not api_secret:
@@ -115,7 +137,8 @@ def build_scalping_demo_runtime(
     )
     runtime.grid_config = SCALPING_GRID_CONFIG
 
-    runtime.store.set_runtime("strategy_profile", "SCALPING_V1")
+    runtime.store.set_runtime("strategy_profile", SCALPING_PROFILE_VERSION)
+    runtime.store.set_runtime("scalping_quant_gate", json.dumps(gate_payload, sort_keys=True))
     runtime.store.set_runtime("environment_label", "BINANCE_FUTURES_DEMO")
     runtime.store.set_runtime("demo_rest_url", DEMO_REST_URL)
     runtime.store.set_runtime("demo_ws_stream_url", DEMO_WS_STREAM_URL)
