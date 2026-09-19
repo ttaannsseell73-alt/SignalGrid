@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+from signalgrid.backtest.data import load_binance_klines_csv
 from signalgrid.engine import SignalGridEngine
 from signalgrid.ops.run_scalping_demo import (
     DEFAULT_SCALPING_SYMBOLS,
@@ -25,7 +26,12 @@ def _parse_symbols(text: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(x.strip().upper() for x in text.split(",") if x.strip()))
 
 
-def build_scalping_paper_runtime(symbols: tuple[str, ...], db_path: str) -> SignalGridRuntime:
+def build_scalping_paper_runtime(
+    symbols: tuple[str, ...],
+    db_path: str,
+    *,
+    skip_rest_warmup: bool = False,
+) -> SignalGridRuntime:
     runtime = SignalGridRuntime.from_environment(
         RuntimeConfig(
             mode=RuntimeMode.PAPER,
@@ -33,6 +39,7 @@ def build_scalping_paper_runtime(symbols: tuple[str, ...], db_path: str) -> Sign
             db_path=db_path,
             warmup_bars=60,
             cleanup_interval_seconds=0.5,
+            skip_rest_warmup=skip_rest_warmup,
         )
     )
     base = runtime.scanner
@@ -60,6 +67,38 @@ def build_scalping_paper_runtime(symbols: tuple[str, ...], db_path: str) -> Sign
     return runtime
 
 
+def preload_real_warmup(
+    runtime: SignalGridRuntime,
+    symbols: tuple[str, ...],
+    warmup_dir: str | Path,
+) -> dict[str, int]:
+    root = Path(warmup_dir)
+    loaded: dict[str, int] = {}
+    for symbol in symbols:
+        path = root / f"{symbol}-1m.csv"
+        if not path.exists():
+            raise RuntimeError(f"PRELOADED_WARMUP_FILE_MISSING:{path}")
+        rows = load_binance_klines_csv(path, symbol)
+        if len(rows) < runtime.config.warmup_bars:
+            raise RuntimeError(
+                f"PRELOADED_WARMUP_TOO_SHORT:{symbol}:{len(rows)}"
+            )
+        selected = rows[-runtime.config.warmup_bars:]
+        state = runtime.router.state(symbol)
+        for row in selected:
+            state.add_bar(row.as_bar())
+        state.taker_buy_quote = selected[-1].taker_buy_quote
+        state.taker_sell_quote = selected[-1].taker_sell_quote
+        state.flow_bucket_start_ms = selected[-1].open_time_ms
+        state.last_event_time_ms = selected[-1].close_time_ms
+        loaded[symbol] = len(selected)
+    runtime.store.set_runtime(
+        "preloaded_warmup",
+        json.dumps(loaded, sort_keys=True),
+    )
+    return loaded
+
+
 async def _run(runtime: SignalGridRuntime, *, journal: Path, required_seconds: float, sample_interval_seconds: float):
     return await run_soak_session(
         runtime,
@@ -81,6 +120,10 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--journal", default="scalping-paper.jsonl")
     parser.add_argument("--overwrite-journal", action="store_true")
     parser.add_argument("--pretty", action="store_true")
+    parser.add_argument(
+        "--warmup-dir",
+        help="Optional directory containing real Binance <SYMBOL>-1m.csv warmup data",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.hours <= 0:
@@ -100,7 +143,13 @@ def main(argv: Iterable[str] | None = None) -> int:
             parser.error("journal already contains samples; use --overwrite-journal")
         journal.unlink()
 
-    runtime = build_scalping_paper_runtime(symbols, args.db)
+    runtime = build_scalping_paper_runtime(
+        symbols,
+        args.db,
+        skip_rest_warmup=bool(args.warmup_dir),
+    )
+    if args.warmup_dir:
+        preload_real_warmup(runtime, symbols, args.warmup_dir)
     try:
         report = asyncio.run(
             _run(
