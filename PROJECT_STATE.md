@@ -58,6 +58,7 @@ Locked constraints:
 - M6 Demo stale-owned-order preflight cleanup: `e2253c06aef76d79e90984ca39cdeb686452af8e`
 - M6 Demo stale-position reset hardening: `5c1e777801c790d3cfa4bef9a344b919de0d0826`
 - M6 Demo/runtime REST timeout hardening: `81003302410f0d5627003f7ecd1d2856ab64fd3b`
+- M7 bounded neutral-grid regime + execution: `6d2b817dde56a3efef722a3226c7bd5507f51d8e`
 
 ## Milestones
 - [x] M0 project skeleton
@@ -98,12 +99,15 @@ Locked constraints:
 - PR #14 merged as `e2253c06aef76d79e90984ca39cdeb686452af8e`; CI PASS on Python 3.11/3.12/3.13. Demo preflight now refuses any open position, refuses foreign/non-SignalGrid open orders, automatically cancels only stale `sg-*` regular/algo orders, verifies the account is empty, then pins leverage and starts reconciliation. This removed manual stale-order cleanup, but the next run still found stale FETUSDT/NEARUSDT positions from prior tests and stopped safely.
 - PR #15 merged as `5c1e777801c790d3cfa4bef9a344b919de0d0826`; CI PASS on Python 3.11/3.12/3.13. Demo-only preflight now resets stale SignalGrid test exposure automatically: it refuses foreign/non-SignalGrid open orders or positions outside the configured stress universe, cancels owned entry orders first, closes remaining configured Demo positions with reduce-only MARKET orders while protective algos remain active, waits until flat, cancels remaining owned algos, verifies the account is fully clean, then pins leverage and starts reconciliation. Production/live paths are unchanged.
 - Next Demo start failed while setting leverage because Binance SDK REST default timeout is 1000 ms and `demo-fapi.binance.com` exceeded that read timeout. PR #16 merged as `81003302410f0d5627003f7ecd1d2856ab64fd3b`; CI PASS on Python 3.11/3.12/3.13. SignalGrid REST timeout is now 5000 ms with explicit 3 retries / 500 ms backoff across runtime REST clients. Demo preflight additionally retries only idempotent calls (position-mode read and leverage setter) on transient network errors; state-changing reset MARKET orders are not blindly retried.
-- Locked follow-up after directional signal/execution proof: add `NEUTRAL_GRID` as a distinct regime outcome; `PASS` remains no-trade. Dynamic leverage remains a later required Risk Hub feature.
+- Authenticated Demo run on 2026-09-19 achieved the first clean directional lifecycle: 1 campaign opened, 1 campaign closed, 1 cleanup completed, 0 open failures, `last_open_error=null`; no recurrence of prior reconciliation, -2011, -2021, or 1-second timeout failures.
+- PR #17 merged as `6d2b817dde56a3efef722a3226c7bd5507f51d8e`; CI PASS on Python 3.11/3.12/3.13 (112 tests). The locked four-outcome regime model is now implemented: `LONG_GRID / SHORT_GRID / NEUTRAL_GRID / PASS`.
+- `NEUTRAL_GRID` uses only the existing volatility + structure + flow family: balanced/compressed RANGE states can arm a finite symmetric LIMIT ladder with no MARKET starter. First fill determines LONG or SHORT, installs global STOP/TP immediately, cancels opposing entries, retains only same-side bounded ladder entries, and stays fail-closed on protection/direction ambiguity. PAPER and Demo telemetry support the neutral path.
+- Dynamic leverage remains the next required Risk Hub feature after one authenticated Demo neutral lifecycle is proven clean.
 - No live-capital path is enabled.
 
 ## Immediate next task
-1. Pull canonical `main` containing REST timeout hardening and rerun `scripts/start_demo_reflex.ps1` with the Binance Futures Demo credentials entered locally.
-2. Verify preflight gets past leverage setup without 1-second read-timeout failure and automatically clears stale owned Demo state safely.
-3. Verify no repeat of reconciliation mismatch or Binance `-2021` basis mismatch and at least one complete open→protected→flat→cleanup lifecycle finishes healthy.
-4. After one clean directional lifecycle, implement the locked four-outcome regime model: `NEUTRAL_GRID / LONG_GRID / SHORT_GRID / PASS`.
-5. Then add the Dynamic Leverage Controller in Risk Hub and proceed to 1h, 24h and 72h Demo validation.
+1. Pull canonical `main` containing M7 neutral-grid execution and rerun `scripts/start_demo_reflex.ps1` with the Binance Futures Demo credentials entered locally.
+2. Watch new neutral telemetry: `neutral_signals_seen`, `emitted_neutral`, `mode_transitions`, plus ordinary runtime counters.
+3. Validation gate: observe at least one `NEUTRAL_GRID` arm and, ideally, one first-fill activation that becomes protected LONG/SHORT without `open_failures`, HALT, orphan state, or protection gaps.
+4. After one clean authenticated neutral lifecycle, implement the Dynamic Leverage Controller inside Risk Hub; do not add a sixth hub.
+5. Then rerun the 1h Demo stress gate and proceed to 24h and 72h Demo validation.
