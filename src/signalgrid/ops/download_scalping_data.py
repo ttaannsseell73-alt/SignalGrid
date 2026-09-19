@@ -31,6 +31,11 @@ def archive_url(dataset: str, symbol: str, day: date, interval: str = "1m") -> s
             f"{BASE_URL}/bookTicker/{symbol}/"
             f"{symbol}-bookTicker-{stamp}.zip"
         )
+    if dataset == "aggTrades":
+        return (
+            f"{BASE_URL}/aggTrades/{symbol}/"
+            f"{symbol}-aggTrades-{stamp}.zip"
+        )
     raise ValueError(f"unsupported dataset: {dataset}")
 
 
