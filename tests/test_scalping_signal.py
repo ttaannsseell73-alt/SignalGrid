@@ -5,6 +5,8 @@ from signalgrid.signals.scalping import (
     ScalpingSignalEngine,
     compression_ratio,
     detect_scalping_structure,
+    market_structure_bias,
+    price_impact_efficiency,
 )
 
 
@@ -56,8 +58,8 @@ def test_detects_breakout_retest_on_closed_bars():
 def test_scalping_engine_emits_directional_signal_only():
     s = _base_state()
     prior_low = min(b.low for b in list(s.bars)[-12:])
-    s.add_bar(Bar(100.0, 100.12, prior_low - 0.35, 99.96, 1800))
-    s.best_bid, s.best_ask = 99.955, 99.965
+    s.add_bar(Bar(100.0, 100.20, prior_low - 0.35, 100.08, 1800))
+    s.best_bid, s.best_ask = 100.075, 100.085
 
     cfg = ScalpingConfig(min_score=0.50, min_directional_flow=0.01, max_stop_bps=200.0)
     sig = ScalpingSignalEngine(cfg).evaluate(s)
@@ -91,3 +93,61 @@ def test_scalping_engine_rejects_opposing_flow():
     sig = ScalpingSignalEngine(cfg).evaluate(s)
     assert sig.direction is Direction.PASS
     assert sig.setup == "SCALP_FLOW_NOT_CONFIRMED"
+
+
+def test_market_structure_bias_quantifies_hh_hl_and_lh_ll():
+    up = []
+    for i in range(5):
+        up.append(Bar(100 + i, 101 + i, 99 + i, 100.5 + i, 1))
+    for i in range(5):
+        up.append(Bar(106 + i, 107 + i, 105 + i, 106.5 + i, 1))
+    up.append(Bar(111, 112, 110, 111.5, 1))
+    ms = market_structure_bias(up, 5)
+    assert ms.bias == 1
+    assert ms.label == "HH_HL"
+
+    down = []
+    for i in range(5):
+        down.append(Bar(110 - i, 111 - i, 109 - i, 109.5 - i, 1))
+    for i in range(5):
+        down.append(Bar(104 - i, 105 - i, 103 - i, 103.5 - i, 1))
+    down.append(Bar(99, 100, 98, 98.5, 1))
+    ms = market_structure_bias(down, 5)
+    assert ms.bias == -1
+    assert ms.label == "LH_LL"
+
+
+def test_price_impact_efficiency_flags_strong_flow_without_progress():
+    bars = [
+        Bar(100, 100.2, 99.8, 100.0, 1),
+        Bar(100, 100.1, 99.9, 100.0, 1),
+    ]
+    low_eff = price_impact_efficiency(
+        bars,
+        reference=100.001,
+        side=1,
+        natr_value=0.001,
+        taker_flow=0.6,
+    )
+    assert low_eff is not None
+    assert low_eff < 0.08
+
+
+def test_scalping_engine_rejects_absorbed_aggressive_flow():
+    s = _base_state()
+    prior_high = max(b.high for b in list(s.bars)[-12:])
+    # Accepted upside breakout but almost no close-to-close price progress.
+    s.add_bar(Bar(100.0, prior_high + 0.4, 99.98, prior_high + 0.20, 2000))
+    s.best_bid, s.best_ask = 100.015, 100.025
+    s.taker_buy_quote, s.taker_sell_quote = 85.0, 15.0
+    s.bid_depth, s.ask_depth = 70.0, 30.0
+
+    cfg = ScalpingConfig(
+        min_score=0.45,
+        max_stop_bps=250.0,
+        absorption_flow_threshold=0.30,
+        min_flow_price_progress_natr=0.10,
+    )
+    sig = ScalpingSignalEngine(cfg).evaluate(s)
+    assert sig.direction is Direction.PASS
+    assert sig.setup == "SCALP_ABSORPTION"
