@@ -36,6 +36,33 @@ Grid logic is **execution only**. It is never allowed to create a trade by itsel
 - no infinite refill grid
 - fail-closed reconciliation
 
+## One-click historical pipeline
+
+For the first empirical gate on Windows:
+
+```text
+RUN_SCALPING_PIPELINE_30D.cmd
+```
+
+It performs, in order:
+
+1. checksum-verified Binance USD-M daily 1m kline download,
+2. checksum-verified historical `bookTicker` download,
+3. local consolidation under `data/scalping/`,
+4. no-lookahead scalping replay,
+5. base-cost and stressed-cost validation,
+6. gate creation only on PASS.
+
+The 30-day download can be large because historical bookTicker is high-frequency data.
+
+A smaller downloader is also present:
+
+```text
+RUN_SCALPING_DOWNLOAD_7D.cmd
+```
+
+Seven days is for data-pipeline smoke testing only. The canonical gate requires at least 28 days of historical span, so a 7-day sample cannot unlock Demo.
+
 ## Quant gate — mandatory before Demo
 
 Demo is locked until historical replay passes the cost-stressed validation gate.
