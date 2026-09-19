@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from signalgrid.models import Direction, RiskDecision, Signal
+from signalgrid.models import Direction, GridMode, RiskDecision, Signal
 
 @dataclass(slots=True)
 class PositionView:
@@ -21,7 +21,7 @@ class RiskEngine:
         self.cfg = cfg or RiskConfig()
 
     def decide(self, signal: Signal, positions: list[PositionView]) -> RiskDecision:
-        if signal.direction is Direction.PASS or signal.expired:
+        if signal.grid_mode is GridMode.PASS or signal.expired:
             return RiskDecision(False, "NO_VALID_SIGNAL")
         if len(positions) >= self.cfg.max_positions:
             return RiskDecision(False, "MAX_POSITIONS")
