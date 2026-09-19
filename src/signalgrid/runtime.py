@@ -17,7 +17,7 @@ from signalgrid.execution.campaign import GridCampaignExecutor, GridCampaignRegi
 from signalgrid.execution.grid import GridConfig, build_grid_plan
 from signalgrid.execution.paper import PaperGridBroker
 from signalgrid.market.binance_events import BinanceMarketEventRouter, EventResult
-from signalgrid.market.public_stream import BinancePublicStreamTransport
+from signalgrid.market.public_stream import BinancePublicStreamTransport, PublicStreamConfig
 from signalgrid.market.warmup import BinanceKlineWarmup, WarmupConfig
 from signalgrid.models import Direction, GridMode
 from signalgrid.risk.engine import PositionView
@@ -143,10 +143,6 @@ class SignalGridRuntime:
             )
             rest_client = DerivativesTradingUsdsFutures(config_rest_api=rest_cfg)
 
-            def public_factory() -> Any:
-                ws_cfg = ConfigurationWebSocketStreams(stream_url=DERIVATIVES_TRADING_USDS_FUTURES_WS_STREAMS_PROD_URL)
-                return DerivativesTradingUsdsFutures(config_ws_streams=ws_cfg)
-
             broker = PaperGridBroker()
             scanner = MultiSymbolScanner(
                 router,
@@ -154,7 +150,7 @@ class SignalGridRuntime:
                 ScannerConfig(),
                 positions_provider=broker.position_views,
             )
-            public = BinancePublicStreamTransport(router, client_factory=public_factory)
+            public = BinancePublicStreamTransport(router)
             warmup = BinanceKlineWarmup(rest_client.rest_api, router, WarmupConfig(bars=config.warmup_bars))
             return cls(config, store=store, router=router, scanner=scanner, public_transport=public, warmup=warmup, paper_broker=broker)
 
@@ -171,10 +167,6 @@ class SignalGridRuntime:
             backoff=REST_BACKOFF_MS,
         )
         rest_client = DerivativesTradingUsdsFutures(config_rest_api=rest_cfg)
-
-        def public_factory() -> Any:
-            ws_cfg = ConfigurationWebSocketStreams(stream_url=DERIVATIVES_TRADING_USDS_FUTURES_WS_STREAMS_TESTNET_URL)
-            return DerivativesTradingUsdsFutures(config_ws_streams=ws_cfg)
 
         def user_factory() -> Any:
             rcfg = ConfigurationRestAPI(
@@ -206,7 +198,14 @@ class SignalGridRuntime:
         adapter = BinanceRestExecutionAdapter(rest_client.rest_api, price_provider, execution_gate=store.execution_ready)
         executor = GridCampaignExecutor(adapter, store)
         scanner = MultiSymbolScanner(router, SignalGridEngine(), ScannerConfig(), positions_provider=positions)
-        public = BinancePublicStreamTransport(router, client_factory=public_factory)
+        testnet_stream_base = "wss://fstream.binancefuture.com/stream?streams="
+        public = BinancePublicStreamTransport(
+            router,
+            PublicStreamConfig(
+                public_stream_base=testnet_stream_base,
+                market_stream_base=testnet_stream_base,
+            ),
+        )
         warmup = BinanceKlineWarmup(rest_client.rest_api, router, WarmupConfig(bars=config.warmup_bars))
         user = BinanceUserStreamTransport(store, client_factory=user_factory)
         return cls(config, store=store, router=router, scanner=scanner, public_transport=public, warmup=warmup, campaign_executor=executor, user_transport=user)
