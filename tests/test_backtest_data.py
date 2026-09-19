@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from signalgrid.backtest.data import BookSnapshot, attach_book_snapshots, load_binance_klines_csv
+from signalgrid.backtest.data import (
+    BookSnapshot,
+    attach_book_snapshots,
+    load_binance_klines_csv,
+    normalize_timestamp_ms,
+)
 
 
 def test_binance_kline_loader_keeps_book_missing(tmp_path: Path):
@@ -52,3 +57,8 @@ def test_bookticker_and_funding_loaders_sort_real_archive_shapes(tmp_path: Path)
     points = load_funding_rate_csv(funding, "BTCUSDT")
     assert [x.timestamp_ms for x in points] == [1000, 2000]
     assert points[0].rate == -0.0001
+
+
+def test_archive_timestamp_normalization_handles_microseconds():
+    assert normalize_timestamp_ms("1700000000000") == 1700000000000
+    assert normalize_timestamp_ms("1700000000000000") == 1700000000000
