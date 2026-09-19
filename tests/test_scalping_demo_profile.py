@@ -14,8 +14,8 @@ def test_scalping_profile_is_short_lived_and_cost_gated():
 
 
 def test_scalping_execution_is_bounded_not_infinite_grid():
-    assert SCALPING_GRID_CONFIG.entry_levels == 2
-    assert 0.5 < SCALPING_GRID_CONFIG.starter_fraction < 1.0
+    assert SCALPING_GRID_CONFIG.entry_levels == 1
+    assert SCALPING_GRID_CONFIG.starter_fraction == 1.0
     assert SCALPING_GRID_CONFIG.max_spacing_bps <= 25.0
     assert SCALPING_RISK_CONFIG.max_positions == 3
     assert SCALPING_RISK_CONFIG.leverage == 3
