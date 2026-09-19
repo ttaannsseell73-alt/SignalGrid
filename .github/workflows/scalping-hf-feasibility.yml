@@ -6,6 +6,8 @@ on:
       - scalping-v1
     paths:
       - ".github/workflows/scalping-hf-feasibility.yml"
+      - "src/signalgrid/backtest/scalping_hf_feasibility_cli.py"
+      - "tests/test_scalping_hf_feasibility_cli.py"
   workflow_dispatch:
 
 jobs:
