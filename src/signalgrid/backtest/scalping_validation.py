@@ -35,6 +35,7 @@ class SliceMetrics:
     avg_holding_bars: float
     avg_mae_usdt: float
     avg_mfe_usdt: float
+    avg_initial_stop_bps: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +84,7 @@ def _slice_metrics(trades, attr: str) -> tuple[SliceMetrics, ...]:
                 avg_holding_bars=mean(float(t.holding_bars) for t in items) if items else 0.0,
                 avg_mae_usdt=mean(float(t.mae_usdt) for t in items) if items else 0.0,
                 avg_mfe_usdt=mean(float(t.mfe_usdt) for t in items) if items else 0.0,
+                avg_initial_stop_bps=mean(float(t.initial_stop_bps) for t in items) if items else 0.0,
             )
         )
     return tuple(out)
