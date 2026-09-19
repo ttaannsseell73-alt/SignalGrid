@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Callable, Iterable
+
+import websockets
 
 from signalgrid.market.binance_events import BinanceMarketEventRouter, EventResult
 
+
 EventCallback = Callable[[EventResult], None]
+
+USDM_PUBLIC_STREAM_BASE = "wss://fstream.binance.com/public/stream?streams="
+USDM_MARKET_STREAM_BASE = "wss://fstream.binance.com/market/stream?streams="
+
 
 @dataclass(frozen=True, slots=True)
 class PublicStreamConfig:
@@ -16,6 +25,7 @@ class PublicStreamConfig:
     reconnect_attempts: int = 10
     max_setup_backoff_seconds: float = 30.0
     rotate_after_seconds: float = 23 * 60 * 60
+    receive_timeout_seconds: float = 5.0
 
     def __post_init__(self) -> None:
         if self.symbols_per_shard < 1:
@@ -26,12 +36,34 @@ class PublicStreamConfig:
             raise ValueError("reconnect_attempts must be between 1 and 10")
         if self.rotate_after_seconds <= 0:
             raise ValueError("rotate_after_seconds must be > 0")
+        if self.receive_timeout_seconds <= 0:
+            raise ValueError("receive_timeout_seconds must be > 0")
+
 
 def shard_symbols(symbols: Iterable[str], size: int) -> list[tuple[str, ...]]:
     if size < 1:
         raise ValueError("size must be >= 1")
     normalized = list(dict.fromkeys(s.upper().strip() for s in symbols if s.strip()))
     return [tuple(normalized[i:i + size]) for i in range(0, len(normalized), size)]
+
+
+def public_stream_names(symbols: Iterable[str]) -> list[str]:
+    return [f"{symbol.lower()}@bookTicker" for symbol in symbols]
+
+
+def market_stream_names(symbols: Iterable[str], interval: str) -> list[str]:
+    out: list[str] = []
+    for symbol in symbols:
+        lower = symbol.lower()
+        out.extend([f"{lower}@aggTrade", f"{lower}@kline_{interval}"])
+    return out
+
+
+def combined_stream_url(base: str, names: list[str]) -> str:
+    if not names:
+        raise ValueError("at least one stream is required")
+    return base + "/".join(names)
+
 
 def _message_to_dict(data: Any) -> dict[str, Any]:
     if isinstance(data, dict):
@@ -44,39 +76,76 @@ def _message_to_dict(data: Any) -> dict[str, Any]:
         return as_dict(by_alias=True, exclude_none=True)
     raise TypeError(f"unsupported websocket message type: {type(data)!r}")
 
-class BinancePublicStreamTransport:
-    """Small live transport around Binance's official USD-M Futures SDK."""
 
-    def __init__(self, router: BinanceMarketEventRouter | None = None, config: PublicStreamConfig | None = None, client_factory: Callable[[], Any] | None = None) -> None:
+class BinancePublicStreamTransport:
+    """USD-M Futures public market transport using Binance's 2026 split routes.
+
+    High-frequency bookTicker is routed through /public.
+    Aggregate trades and klines are routed through /market.
+    """
+
+    def __init__(
+        self,
+        router: BinanceMarketEventRouter | None = None,
+        config: PublicStreamConfig | None = None,
+        websocket_connect: Callable[..., Any] | None = None,
+    ) -> None:
         self.router = router or BinanceMarketEventRouter()
         self.config = config or PublicStreamConfig()
-        self._client_factory = client_factory or self._build_sdk_client
+        self._websocket_connect = websocket_connect or websockets.connect
 
-    def _build_sdk_client(self) -> Any:
-        from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futures import ConfigurationWebSocketStreams, DERIVATIVES_TRADING_USDS_FUTURES_WS_STREAMS_PROD_URL, DerivativesTradingUsdsFutures
-        cfg = ConfigurationWebSocketStreams(stream_url=DERIVATIVES_TRADING_USDS_FUTURES_WS_STREAMS_PROD_URL, reconnect_delay=self.config.reconnect_delay_ms, reconnect_attempts=self.config.reconnect_attempts)
-        return DerivativesTradingUsdsFutures(config_ws_streams=cfg)
-
-    def _interval_value(self) -> str:
-        from binance_sdk_derivatives_trading_usds_futures.websocket_streams.models import KlineCandlestickStreamsIntervalEnum
-        key = f"INTERVAL_{self.config.interval}"
-        try:
-            return KlineCandlestickStreamsIntervalEnum[key].value
-        except KeyError as exc:
-            raise ValueError(f"unsupported Binance kline interval: {self.config.interval}") from exc
-
-    def handle_message(self, data: Any, on_event: EventCallback | None = None) -> EventResult | None:
+    def handle_message(
+        self,
+        data: Any,
+        on_event: EventCallback | None = None,
+    ) -> EventResult | None:
         event = self.router.on_message(_message_to_dict(data))
         if event is not None and event.changed and on_event is not None:
             on_event(event)
         return event
 
-    async def run(self, symbols: Iterable[str], on_event: EventCallback | None = None, stop_event: asyncio.Event | None = None) -> None:
+    async def run(
+        self,
+        symbols: Iterable[str],
+        on_event: EventCallback | None = None,
+        stop_event: asyncio.Event | None = None,
+    ) -> None:
         shards = shard_symbols(symbols, self.config.symbols_per_shard)
         if not shards:
             raise ValueError("at least one symbol is required")
         stop = stop_event or asyncio.Event()
-        tasks = [asyncio.create_task(self._run_shard(shard, on_event, stop), name=f"binance-public-{i}") for i, shard in enumerate(shards)]
+        tasks: list[asyncio.Task[None]] = []
+        for i, shard in enumerate(shards):
+            tasks.extend(
+                [
+                    asyncio.create_task(
+                        self._run_endpoint(
+                            shard,
+                            "public",
+                            combined_stream_url(
+                                USDM_PUBLIC_STREAM_BASE,
+                                public_stream_names(shard),
+                            ),
+                            on_event,
+                            stop,
+                        ),
+                        name=f"binance-public-{i}",
+                    ),
+                    asyncio.create_task(
+                        self._run_endpoint(
+                            shard,
+                            "market",
+                            combined_stream_url(
+                                USDM_MARKET_STREAM_BASE,
+                                market_stream_names(shard, self.config.interval),
+                            ),
+                            on_event,
+                            stop,
+                        ),
+                        name=f"binance-market-{i}",
+                    ),
+                ]
+            )
         try:
             await asyncio.gather(*tasks)
         finally:
@@ -85,46 +154,64 @@ class BinancePublicStreamTransport:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _run_shard(self, symbols: tuple[str, ...], on_event: EventCallback | None, stop: asyncio.Event) -> None:
+    async def _run_endpoint(
+        self,
+        symbols: tuple[str, ...],
+        endpoint_name: str,
+        url: str,
+        on_event: EventCallback | None,
+        stop: asyncio.Event,
+    ) -> None:
         failures = 0
         while not stop.is_set():
-            connection = None
-            streams: list[Any] = []
             try:
-                client = self._client_factory()
-                connection = await client.websocket_streams.create_connection()
-                interval = self._interval_value()
-                for symbol in symbols:
-                    streams.extend(await self._subscribe_symbol(connection, symbol, interval, on_event))
+                await self._consume_connection(url, on_event, stop)
                 failures = 0
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=self.config.rotate_after_seconds)
-                except TimeoutError:
-                    pass
+                if not stop.is_set():
+                    # Normal rotation; reconnect immediately.
+                    continue
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 failures += 1
-                delay = min(self.config.max_setup_backoff_seconds, (self.config.reconnect_delay_ms / 1000.0) * (2 ** min(failures - 1, 8)))
+                if failures >= self.config.reconnect_attempts:
+                    raise RuntimeError(
+                        f"{endpoint_name} websocket exceeded reconnect budget "
+                        f"for {','.join(symbols)}"
+                    ) from exc
+                delay = min(
+                    self.config.max_setup_backoff_seconds,
+                    (self.config.reconnect_delay_ms / 1000.0)
+                    * (2 ** min(failures - 1, 8)),
+                )
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=delay)
                 except TimeoutError:
                     pass
-            finally:
-                for stream in streams:
-                    try:
-                        await stream.unsubscribe()
-                    except Exception:
-                        pass
-                if connection is not None:
-                    try:
-                        await connection.close_connection(close_session=True)
-                    except Exception:
-                        pass
 
-    async def _subscribe_symbol(self, connection: Any, symbol: str, interval: str, on_event: EventCallback | None) -> list[Any]:
-        lower = symbol.lower()
-        streams = [await connection.aggregate_trade_streams(symbol=lower), await connection.individual_symbol_book_ticker_streams(symbol=lower), await connection.kline_candlestick_streams(symbol=lower, interval=interval)]
-        for stream in streams:
-            stream.on("message", lambda data, cb=on_event: self.handle_message(data, cb))
-        return streams
+    async def _consume_connection(
+        self,
+        url: str,
+        on_event: EventCallback | None,
+        stop: asyncio.Event,
+    ) -> None:
+        started = monotonic()
+        async with self._websocket_connect(
+            url,
+            ping_interval=20,
+            ping_timeout=20,
+            close_timeout=10,
+            max_size=4 * 1024 * 1024,
+        ) as ws:
+            while not stop.is_set():
+                if monotonic() - started >= self.config.rotate_after_seconds:
+                    return
+                try:
+                    raw = await asyncio.wait_for(
+                        ws.recv(),
+                        timeout=self.config.receive_timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    continue
+                payload = json.loads(raw) if isinstance(raw, str) else json.loads(raw.decode())
+                self.handle_message(payload, on_event)
