@@ -2,17 +2,30 @@ from signalgrid.ops.run_scalping_shadow import (
     ShadowAccumulator,
     _imbalance,
     _microprice,
-    subscription_names,
+    MARKET_STREAM_BASE,
+    PUBLIC_STREAM_BASE,
+    combined_url,
+    market_stream_names,
+    public_stream_names,
 )
 
 
-def test_shadow_subscription_names_include_trade_book_and_depth():
-    names = subscription_names(("BTCUSDT", "ETHUSDT"))
-    assert "btcusdt@aggTrade" in names
-    assert "btcusdt@bookTicker" in names
-    assert "btcusdt@depth20@100ms" in names
-    assert "ethusdt@depth20@100ms" in names
-    assert len(names) == 6
+def test_shadow_routes_trade_and_book_to_split_2026_endpoints():
+    public = public_stream_names(("BTCUSDT", "ETHUSDT"))
+    market = market_stream_names(("BTCUSDT", "ETHUSDT"))
+    assert public == [
+        "btcusdt@bookTicker",
+        "btcusdt@depth20@100ms",
+        "ethusdt@bookTicker",
+        "ethusdt@depth20@100ms",
+    ]
+    assert market == ["btcusdt@aggTrade", "ethusdt@aggTrade"]
+    assert combined_url(PUBLIC_STREAM_BASE, public).startswith(
+        "wss://fstream.binance.com/public/stream?streams="
+    )
+    assert combined_url(MARKET_STREAM_BASE, market).startswith(
+        "wss://fstream.binance.com/market/stream?streams="
+    )
 
 
 def test_shadow_accumulator_emits_previous_second():
