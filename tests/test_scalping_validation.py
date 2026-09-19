@@ -4,6 +4,7 @@ from signalgrid.backtest.scalping_validation import (
     ScalpingValidationGate,
     _slice_metrics,
     run_scalping_validation,
+    scalping_parameter_neighborhood,
 )
 from signalgrid.models import Direction
 
@@ -110,3 +111,52 @@ def test_validation_rejects_invalid_oos_fraction():
             rows,
             gate=ScalpingValidationGate(min_trades=1, oos_fraction=0.05),
         )
+
+
+def test_scalping_parameter_neighborhood_is_small_and_centered():
+    from signalgrid.signals.scalping import ScalpingConfig
+
+    base = ScalpingConfig(min_score=0.62, min_expansion=0.90)
+    candidates = scalping_parameter_neighborhood(base)
+    assert len(candidates) == 9
+    assert any(
+        candidate.min_score == base.min_score
+        and candidate.min_expansion == base.min_expansion
+        for candidate in candidates
+    )
+    assert min(c.min_score for c in candidates) == 0.59
+    assert max(c.min_score for c in candidates) == 0.65
+    assert min(c.min_expansion for c in candidates) == 0.85
+    assert max(c.min_expansion for c in candidates) == 0.95
+
+
+def test_validation_reports_robustness_even_when_no_edge():
+    rows = [
+        HistoricalBar(
+            symbol="BTCUSDT",
+            open_time_ms=i * 60_000,
+            close_time_ms=(i + 1) * 60_000 - 1,
+            open=100.0,
+            high=100.01,
+            low=99.99,
+            close=100.0,
+            volume=1000.0,
+            quote_volume=100_000.0,
+            taker_buy_quote=50_000.0,
+        )
+        for i in range(70)
+    ]
+    report = run_scalping_validation(
+        rows,
+        gate=ScalpingValidationGate(
+            min_trades=1,
+            min_history_days=0.0,
+            min_oos_trades=1,
+        ),
+    )
+    assert report.robustness.candidates == 9
+    assert report.robustness.positive_fraction == 0.0
+    assert any(
+        reason.startswith("ROBUSTNESS_POSITIVE_FRACTION")
+        for reason in report.reasons
+    )
