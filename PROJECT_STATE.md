@@ -1,5 +1,13 @@
 # PROJECT_STATE
 
+## PROJECT STATUS — FROZEN
+- **Frozen on 2026-09-19 by explicit user decision.**
+- No new SignalGrid architecture, strategy, execution, risk or exchange-integration work is to be added while frozen.
+- Preserve the current main branch as the canonical recovery point; do not delete or rewrite existing work.
+- Reason: benchmark mature, already-working upstream trading bots first instead of continuing custom exchange-infrastructure development.
+- Reopen SignalGrid only after external benchmarks produce evidence that a specific SignalGrid component has measurable value worth retaining.
+- Locked margin policy remains ISOLATED-only if/when SignalGrid is resumed.
+
 ## Canonical repository
 - Repo: `ttaannsseell73-alt/SignalGrid`
 - Canonical branch: `main`
@@ -118,8 +126,17 @@ Locked constraints:
 - No live-capital path is enabled.
 
 ## Immediate next task
-1. Pull canonical `main` containing Binance algo lifecycle hardening and rerun `scripts/start_demo_reflex.ps1` with Binance Futures Demo credentials entered locally.
-2. Confirm `STOP_TOO_CLOSE` stays a signal-layer rejection, `open_failures=0`, no `ALGO_IDENTITY_CONFLICT`, and no false `TERMINAL_ALGO_MUTATION` on `TRIGGERED -> FINISHED`.
-3. Validation gate: observe at least one `NEUTRAL_GRID` arm and one first-fill activation that becomes protected LONG/SHORT, then flat/cleanup, with no HALT, no orphan state and no protection gaps.
-4. After one clean authenticated neutral lifecycle, implement the Dynamic Leverage Controller inside Risk Hub; do not add a sixth hub.
-5. Then rerun the 1h Demo stress gate and proceed to 24h and 72h Demo validation.
+SignalGrid is frozen. No further SignalGrid runtime testing or development is scheduled until benchmark evidence justifies reopening it.
+
+External benchmark order:
+1. OctoBot 2.1.1 stable — upstream/unmodified Binance Futures Testnet/Demo test, ISOLATED required.
+2. Hummingbot — upstream/unmodified perpetual market-making/execution benchmark.
+3. Passivbot v8 — backtest benchmark while isolated-margin live entry support remains unsuitable for the locked safety rule.
+4. TWIN GRID — optional later comparison.
+
+Benchmark rule:
+- Start from a working upstream system.
+- No source-code modifications in the first evaluation pass; config-only changes are allowed.
+- ISOLATED margin is mandatory for authenticated futures testing.
+- If a system cannot satisfy the safety gate without source modification, reject it from authenticated testing.
+- Add only small, evidence-driven control layers after a baseline system has run successfully and its behavior is understood.
