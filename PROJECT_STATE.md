@@ -41,11 +41,13 @@
 ### Quant validation
 - Existing no-lookahead replay engine generalized for the scalping evaluator.
 - Next-bar-open execution rule retained.
-- Real historical `bookTicker` required.
+- Historical archive scope is explicitly `PRICE_ACTION_TAKER_ONLY`; unsupported historical book data is not fabricated.
 - Base and stressed friction scenarios.
 - Net expectancy, hit rate, profit factor, drawdown and cost share.
 - MAE/MFE and holding-time metrics added.
 - Setup and regime slices added.
+- Parameter robustness: 3x3 local neighborhood around score/expansion thresholds.
+- At least 60% of nearby variants must keep positive OOS stressed expectancy.
 - Fail-closed `ScalpingValidationGate`.
 - Passing validation writes a profile-versioned local gate marker.
 - Demo runtime refuses to start with missing, failed or stale quant gate.
@@ -67,14 +69,21 @@
 5. Demo soak/reconciliation/failure testing.
 6. Only after sufficient evidence -> consider very small live-capital validation.
 
+### Multi-symbol portfolio gate
+- `RUN_SCALPING_PORTFOLIO_30D.cmd` validates BTCUSDT, ETHUSDT and SOLUSDT by default.
+- A portfolio gate is written only if every requested symbol passes independently.
+- Demo runtime only accepts symbols listed in the passed historical gate.
+
 ## CURRENT GATE
 Code/CI layer is implemented. Historical acquisition is now automated with checksum verification.
 
-Canonical empirical action:
-- `RUN_SCALPING_PIPELINE_30D.cmd`
-- downloads 30 daily Binance USD-M kline + bookTicker archives,
-- runs the real no-lookahead cost-stressed replay,
+Canonical empirical actions:
+- Single-symbol: `RUN_SCALPING_PIPELINE_30D.cmd`
+- Preferred multi-symbol: `RUN_SCALPING_PORTFOLIO_30D.cmd`
+- downloads 30 daily Binance USD-M 1m kline archives,
+- runs real no-lookahead base + stressed replay,
+- checks OOS performance and local parameter robustness,
 - requires at least 28 days of historical span,
-- creates the Demo unlock marker only if the quant gate actually passes.
+- creates the Demo unlock marker only if the requested validation set actually passes.
 
 No claim of profitable edge is allowed until that real historical run passes. A 7-day dataset is smoke-only and cannot unlock Demo.
