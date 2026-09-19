@@ -15,6 +15,7 @@ from signalgrid.execution.binance import (
     client_order_id,
 )
 from signalgrid.execution.grid import GridPlan
+from signalgrid.models import Direction, GridMode
 from signalgrid.state.store import ACTIVE_ALGO_STATUSES, ACTIVE_ORDER_STATUSES, StateStore
 
 
@@ -47,6 +48,13 @@ class GridCampaignRecord:
     take_profit_client_id: str
     created_at_ms: int
     updated_at_ms: int
+    mode: str = ""
+    activated: bool = True
+    expires_at_ms: int = 0
+    neutral_long_invalidation: float | None = None
+    neutral_long_take_profit: float | None = None
+    neutral_short_invalidation: float | None = None
+    neutral_short_take_profit: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +106,17 @@ class GridCampaignRegistry:
             take_profit_client_id=str(raw["take_profit_client_id"]),
             created_at_ms=int(raw["created_at_ms"]),
             updated_at_ms=int(raw["updated_at_ms"]),
+            mode=str(raw.get("mode") or (
+                GridMode.LONG_GRID.value if str(raw.get("direction")) == Direction.LONG.value
+                else GridMode.SHORT_GRID.value if str(raw.get("direction")) == Direction.SHORT.value
+                else GridMode.NEUTRAL_GRID.value
+            )),
+            activated=bool(raw.get("activated", True)),
+            expires_at_ms=int(raw.get("expires_at_ms", 0)),
+            neutral_long_invalidation=None if raw.get("neutral_long_invalidation") is None else float(raw["neutral_long_invalidation"]),
+            neutral_long_take_profit=None if raw.get("neutral_long_take_profit") is None else float(raw["neutral_long_take_profit"]),
+            neutral_short_invalidation=None if raw.get("neutral_short_invalidation") is None else float(raw["neutral_short_invalidation"]),
+            neutral_short_take_profit=None if raw.get("neutral_short_take_profit") is None else float(raw["neutral_short_take_profit"]),
         )
 
     def records(self) -> tuple[GridCampaignRecord, ...]:
@@ -116,10 +135,11 @@ class GridCampaignRegistry:
         if self.active(symbol) is not None:
             raise GridCampaignStateError(f"active campaign already exists for {symbol}")
         now_ms = int(time() * 1000)
+        neutral = plan.mode is GridMode.NEUTRAL_GRID
         record = GridCampaignRecord(
             campaign_id=plan.campaign_id,
             symbol=symbol,
-            direction=plan.direction.value,
+            direction="NEUTRAL" if neutral else plan.direction.value,
             status="OPENING",
             reference_price=plan.reference_price,
             total_notional_usdt=plan.total_notional_usdt,
@@ -127,7 +147,7 @@ class GridCampaignRegistry:
             spacing_bps=plan.spacing_bps,
             invalidation=plan.invalidation,
             take_profit=plan.take_profit,
-            starter_client_id=client_order_id("e", f"{plan.campaign_id}:starter"),
+            starter_client_id="" if neutral else client_order_id("e", f"{plan.campaign_id}:starter"),
             limit_client_ids=tuple(
                 client_order_id("g", f"{plan.campaign_id}:level:{level.index}")
                 for level in plan.entries
@@ -137,6 +157,13 @@ class GridCampaignRegistry:
             take_profit_client_id=client_order_id("x", f"{plan.campaign_id}:tp"),
             created_at_ms=now_ms,
             updated_at_ms=now_ms,
+            mode=plan.mode.value,
+            activated=not neutral,
+            expires_at_ms=plan.expires_at_ms,
+            neutral_long_invalidation=plan.neutral_long_invalidation,
+            neutral_long_take_profit=plan.neutral_long_take_profit,
+            neutral_short_invalidation=plan.neutral_short_invalidation,
+            neutral_short_take_profit=plan.neutral_short_take_profit,
         )
         raw = self._load_raw()
         raw[symbol] = asdict(record)
@@ -148,6 +175,24 @@ class GridCampaignRegistry:
         if record is None:
             raise GridCampaignStateError(f"campaign not found for {symbol.upper()}")
         updated = replace(record, status=status, updated_at_ms=int(time() * 1000))
+        raw = self._load_raw()
+        raw[record.symbol] = asdict(updated)
+        self._save_raw(raw)
+        return updated
+
+    def activate_neutral(self, symbol: str, direction: Direction) -> GridCampaignRecord:
+        record = self.get(symbol)
+        if record is None:
+            raise GridCampaignStateError(f"campaign not found for {symbol.upper()}")
+        if record.mode != GridMode.NEUTRAL_GRID.value:
+            raise GridCampaignStateError(f"campaign is not neutral for {symbol.upper()}")
+        updated = replace(
+            record,
+            direction=direction.value,
+            activated=True,
+            status="ACTIVE",
+            updated_at_ms=int(time() * 1000),
+        )
         raw = self._load_raw()
         raw[record.symbol] = asdict(updated)
         self._save_raw(raw)
