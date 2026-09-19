@@ -35,12 +35,25 @@ def test_bookticker_updates_liquidity_proxy():
     assert s.ask_depth == 8
     assert s.last_event_time_ms == 123
 
-def test_forming_kline_replaces_last_bar():
+def test_forming_kline_does_not_enter_closed_bar_state():
     r = BinanceMarketEventRouter()
-    base = {"e":"kline","s":"SOLUSDT","k":{"t":1000,"o":"100","h":"101","l":"99","c":"100.5","v":"10"}}
-    r.on_message(base)
-    updated = {"e":"kline","s":"SOLUSDT","k":{"t":1000,"o":"100","h":"102","l":"99","c":"101.5","v":"15"}}
-    r.on_message(updated)
+    base = {"e":"kline","s":"SOLUSDT","k":{"t":1000,"o":"100","h":"101","l":"99","c":"100.5","v":"10","x":False}}
+    first = r.on_message(base)
+    updated = {"e":"kline","s":"SOLUSDT","k":{"t":1000,"o":"100","h":"102","l":"99","c":"101.5","v":"15","x":False}}
+    second = r.on_message(updated)
     s = r.state("SOLUSDT")
+    assert len(s.bars) == 0
+    assert first is not None and first.changed is False
+    assert second is not None and second.changed is False
+
+
+def test_closed_kline_is_appended_once_and_duplicate_close_is_idempotent():
+    r = BinanceMarketEventRouter()
+    closed = {"e":"kline","s":"SOLUSDT","k":{"t":1000,"o":"100","h":"102","l":"99","c":"101.5","v":"15","x":True}}
+    result = r.on_message(closed)
+    duplicate = r.on_message(closed)
+    s = r.state("SOLUSDT")
+    assert result is not None and result.changed is True
+    assert duplicate is not None and duplicate.changed is True
     assert len(s.bars) == 1
     assert s.bars[-1].close == 101.5
