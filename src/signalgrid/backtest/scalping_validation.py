@@ -17,6 +17,7 @@ class ScalpingValidationGate:
     min_base_profit_factor: float = 1.05
     max_base_drawdown_pct: float = 0.15
     max_base_cost_share: float = 0.70
+    min_history_days: float = 28.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,7 @@ class ScalpingValidationReport:
     stress: BacktestResult
     by_setup: tuple[SliceMetrics, ...]
     by_regime: tuple[SliceMetrics, ...]
+    history_span_days: float
     passed: bool
     reasons: tuple[str, ...]
 
@@ -115,6 +117,18 @@ def run_scalping_validation(
     )
 
     reasons: list[str] = []
+    history_span_days = 0.0
+    if rows:
+        ordered_times = sorted((r.open_time_ms, r.close_time_ms) for r in rows)
+        history_span_days = max(
+            0.0,
+            (ordered_times[-1][1] - ordered_times[0][0]) / 86_400_000.0,
+        )
+    if history_span_days < gate_cfg.min_history_days:
+        reasons.append(
+            f"INSUFFICIENT_HISTORY:{history_span_days:.3f}<{gate_cfg.min_history_days:.3f}"
+        )
+
     bm = base.metrics
     sm = stress.metrics
 
@@ -146,6 +160,7 @@ def run_scalping_validation(
         stress=stress,
         by_setup=_slice_metrics(base.trades, "setup"),
         by_regime=_slice_metrics(base.trades, "regime"),
+        history_span_days=history_span_days,
         passed=not reasons,
         reasons=tuple(reasons),
     )
