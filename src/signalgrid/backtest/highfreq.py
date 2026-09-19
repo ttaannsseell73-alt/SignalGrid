@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -72,7 +73,7 @@ def iter_binance_aggtrades_csv(
             rows: Iterable[list[str]] = reader
         else:
             header = list(AGGTRADE_COLUMNS)
-            rows = (row for row in [first, *reader])
+            rows = chain((first,), reader)
 
         index = {name: i for i, name in enumerate(header)}
 
