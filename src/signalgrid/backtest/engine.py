@@ -34,6 +34,7 @@ class BacktestConfig:
     tp_min_spacing_bps: float = 4.0
     tp_max_spacing_bps: float = 25.0
     tp_steps: float = 1.2
+    min_take_profit_bps: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +157,7 @@ def _take_profit_price(
         cfg.tp_max_spacing_bps,
         max(cfg.tp_min_spacing_bps, nv * 10_000.0 * cfg.tp_spacing_natr_multiplier),
     )
-    target_bps = spacing_bps * cfg.tp_steps
+    target_bps = max(spacing_bps * cfg.tp_steps, cfg.min_take_profit_bps)
     side = _side(signal.direction)
     return reference * (1.0 + side * target_bps / 10_000.0)
 
