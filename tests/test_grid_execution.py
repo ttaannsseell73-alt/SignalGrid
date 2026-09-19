@@ -215,3 +215,25 @@ def test_paper_neutral_grid_arms_without_position_then_activates_long_and_mean_r
     assert closed.status == "CLOSED"
     assert closed.close_reason == "TAKE_PROFIT"
     assert broker.position_views() == []
+
+
+def test_single_entry_scalping_plan_has_no_resting_pullback_orders():
+    s = state()
+    plan = build_grid_plan(
+        signal(s),
+        decision(),
+        s,
+        GridConfig(
+            entry_levels=1,
+            starter_fraction=1.0,
+            spacing_natr_multiplier=0.20,
+            min_spacing_bps=4.0,
+            max_spacing_bps=25.0,
+            take_profit_steps=1.2,
+        ),
+    )
+    assert len(plan.entries) == 1
+    assert plan.entries[0].kind == "MARKET"
+    assert plan.entries[0].notional_usdt == 500.0
+    assert plan.take_profit > plan.reference_price
+    assert plan.invalidation < plan.reference_price
