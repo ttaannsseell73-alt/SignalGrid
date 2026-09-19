@@ -73,15 +73,29 @@ def _numeric_first(value: str) -> bool:
         return False
 
 
+def _single_csv_name(archive: zipfile.ZipFile, zip_name: str) -> str:
+    names = [n for n in archive.namelist() if n.lower().endswith(".csv")]
+    if len(names) != 1:
+        raise RuntimeError(
+            f"{zip_name} must contain exactly one CSV, found {len(names)}"
+        )
+    return names[0]
+
+
+def _normalize_timestamp_ms(value: str) -> int:
+    ts = int(float(value))
+    # Binance archives may expose microsecond timestamps in newer datasets.
+    # Normalize to milliseconds because the replay/state layer is millisecond based.
+    if ts > 100_000_000_000_000:
+        ts //= 1_000
+    return ts
+
+
 def _append_zip_csv(zip_path: Path, writer: csv.writer) -> int:
     written = 0
     with zipfile.ZipFile(zip_path) as archive:
-        names = [n for n in archive.namelist() if n.lower().endswith(".csv")]
-        if len(names) != 1:
-            raise RuntimeError(
-                f"{zip_path.name} must contain exactly one CSV, found {len(names)}"
-            )
-        with archive.open(names[0], "r") as raw:
+        name = _single_csv_name(archive, zip_path.name)
+        with archive.open(name, "r") as raw:
             text = io.TextIOWrapper(raw, encoding="utf-8-sig", newline="")
             reader = csv.reader(text)
             for row in reader:
@@ -94,6 +108,81 @@ def _append_zip_csv(zip_path: Path, writer: csv.writer) -> int:
                 writer.writerow(row)
                 written += 1
     return written
+
+
+def _bookticker_event_index(header: list[str] | None) -> int:
+    if header is None:
+        # Canonical Binance USD-M archive layout:
+        # update_id,bid_price,bid_qty,ask_price,ask_qty,transaction_time,event_time
+        return 6
+    index = {name.strip().lower(): i for i, name in enumerate(header)}
+    for alias in ("event_time", "eventtime", "transaction_time", "transactiontime"):
+        if alias in index:
+            return index[alias]
+    raise RuntimeError("bookTicker archive has no event/transaction time column")
+
+
+def _append_bookticker_sampled_zip(
+    zip_path: Path,
+    writer: csv.writer,
+    *,
+    bucket_ms: int = 60_000,
+) -> int:
+    """Keep only the latest bookTicker at-or-before each minute boundary.
+
+    Raw bookTicker archives can be very large. The backtest only needs the latest
+    observable snapshot close to each 1m bar close. We therefore keep one row per
+    minute bucket, selected by maximum event timestamp. A full-day dictionary is
+    bounded to ~1440 entries and is also robust to archive rows arriving unsorted.
+    """
+    if bucket_ms <= 0:
+        raise ValueError("bucket_ms must be positive")
+
+    latest: dict[int, tuple[int, list[str]]] = {}
+    with zipfile.ZipFile(zip_path) as archive:
+        name = _single_csv_name(archive, zip_path.name)
+        with archive.open(name, "r") as raw:
+            text = io.TextIOWrapper(raw, encoding="utf-8-sig", newline="")
+            reader = csv.reader(text)
+            first = next(reader, None)
+            if first is None:
+                return 0
+
+            header: list[str] | None = None
+            rows = []
+            if _numeric_first(first[0]):
+                rows.append(first)
+            else:
+                header = first
+
+            time_index = _bookticker_event_index(header)
+            rows.extend(reader)
+
+            for row in rows:
+                if not row or time_index >= len(row) or not _numeric_first(row[0]):
+                    continue
+                try:
+                    event_ms = _normalize_timestamp_ms(row[time_index])
+                except (ValueError, TypeError):
+                    continue
+                # Bucket by the minute containing the event; the latest event in
+                # that minute is at-or-before that minute's close.
+                bucket = event_ms // bucket_ms
+                current = latest.get(bucket)
+                if current is None or event_ms > current[0]:
+                    normalized = list(row)
+                    normalized[time_index] = str(event_ms)
+                    # Canonical headerless layout also carries transaction time.
+                    if header is None and len(normalized) > 5:
+                        try:
+                            normalized[5] = str(_normalize_timestamp_ms(normalized[5]))
+                        except (ValueError, TypeError):
+                            pass
+                    latest[bucket] = (event_ms, normalized)
+
+    for _, row in sorted(latest.values(), key=lambda item: item[0]):
+        writer.writerow(row)
+    return len(latest)
 
 
 def _days(start: date, end: date):
@@ -138,7 +227,10 @@ def download_dataset(
                             print(f"[skip] archive not published: {day}", flush=True)
                             continue
                         raise
-                    rows += _append_zip_csv(zip_path, writer)
+                    if dataset == "bookTicker":
+                        rows += _append_bookticker_sampled_zip(zip_path, writer)
+                    else:
+                        rows += _append_zip_csv(zip_path, writer)
                     archives += 1
         if archives == 0 or rows == 0:
             raise RuntimeError(f"no {dataset} data downloaded for {symbol}")
@@ -151,7 +243,7 @@ def download_dataset(
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
-        description="Download checksum-verified Binance USD-M scalping datasets"
+        description="Download checksum-verified Binance USD-M scalping datasets; bookTicker is minute-sampled"
     )
     p.add_argument("--symbol", default="BTCUSDT")
     p.add_argument("--days", type=int, default=7)
