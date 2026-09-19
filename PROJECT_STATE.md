@@ -59,6 +59,7 @@ Locked constraints:
 - M6 Demo stale-position reset hardening: `5c1e777801c790d3cfa4bef9a344b919de0d0826`
 - M6 Demo/runtime REST timeout hardening: `81003302410f0d5627003f7ecd1d2856ab64fd3b`
 - M7 bounded neutral-grid regime + execution: `6d2b817dde56a3efef722a3226c7bd5507f51d8e`
+- M7 directional stop-geometry signal gate: `a4ade7759a4ed9fb54bbb0f45813d1b71df21227`
 
 ## Milestones
 - [x] M0 project skeleton
@@ -102,12 +103,14 @@ Locked constraints:
 - Authenticated Demo run on 2026-09-19 achieved the first clean directional lifecycle: 1 campaign opened, 1 campaign closed, 1 cleanup completed, 0 open failures, `last_open_error=null`; no recurrence of prior reconciliation, -2011, -2021, or 1-second timeout failures.
 - PR #17 merged as `6d2b817dde56a3efef722a3226c7bd5507f51d8e`; CI PASS on Python 3.11/3.12/3.13 (112 tests). The locked four-outcome regime model is now implemented: `LONG_GRID / SHORT_GRID / NEUTRAL_GRID / PASS`.
 - `NEUTRAL_GRID` uses only the existing volatility + structure + flow family: balanced/compressed RANGE states can arm a finite symmetric LIMIT ladder with no MARKET starter. First fill determines LONG or SHORT, installs global STOP/TP immediately, cancels opposing entries, retains only same-side bounded ladder entries, and stays fail-closed on protection/direction ambiguity. PAPER and Demo telemetry support the neutral path.
+- First authenticated M7 Demo run proved neutral regime emission/arming (`neutral_signals_seen=1`, `emitted_neutral=1`, `campaigns_opened=1`) but also exposed repeated directional pre-exposure rejects: BTC LONG invalidation was ~0.26 bps from current contract price while execution requires a 2 bps protective-trigger guard, causing `ProtectiveTriggerError` and inflating `open_failures` despite no exposure being opened.
+- PR #18 merged as `a4ade7759a4ed9fb54bbb0f45813d1b71df21227`; CI PASS on Python 3.11/3.12/3.13. Directional stop geometry now fails in SignalEngine before execution: invalidation must be on the correct side and at least 3 bps from current contract-price reference, otherwise the signal becomes `PASS / STOP_TOO_CLOSE`. Neutral-grid logic is unchanged. Soak evaluation also now allows only a 10 ms timestamp-quantization epsilon, fixing an unrelated CI boundary flake without weakening material duration coverage.
 - Dynamic leverage remains the next required Risk Hub feature after one authenticated Demo neutral lifecycle is proven clean.
 - No live-capital path is enabled.
 
 ## Immediate next task
-1. Pull canonical `main` containing M7 neutral-grid execution and rerun `scripts/start_demo_reflex.ps1` with the Binance Futures Demo credentials entered locally.
-2. Watch new neutral telemetry: `neutral_signals_seen`, `emitted_neutral`, `mode_transitions`, plus ordinary runtime counters.
-3. Validation gate: observe at least one `NEUTRAL_GRID` arm and, ideally, one first-fill activation that becomes protected LONG/SHORT without `open_failures`, HALT, orphan state, or protection gaps.
+1. Pull canonical `main` containing the directional stop-geometry signal gate and rerun `scripts/start_demo_reflex.ps1` with Binance Futures Demo credentials entered locally.
+2. Confirm near-market directional invalidations now appear under `rejection_reasons.STOP_TOO_CLOSE` instead of `last_open_error` / `open_failures`.
+3. Validation gate: observe at least one `NEUTRAL_GRID` arm and one first-fill activation that becomes protected LONG/SHORT, then flat/cleanup, with `open_failures=0`, no HALT, no orphan state and no protection gaps.
 4. After one clean authenticated neutral lifecycle, implement the Dynamic Leverage Controller inside Risk Hub; do not add a sixth hub.
 5. Then rerun the 1h Demo stress gate and proceed to 24h and 72h Demo validation.
