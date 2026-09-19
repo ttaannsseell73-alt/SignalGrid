@@ -41,22 +41,16 @@ $symbol = if ([string]::IsNullOrWhiteSpace($env:SIGNALGRID_SCALPING_VALIDATE_SYM
 
 $dataDir = Join-Path $repoRoot "data\scalping"
 $klines = Join-Path $dataDir ($symbol + "-1m.csv")
-$book = Join-Path $dataDir ($symbol + "-bookTicker.csv")
 $funding = Join-Path $dataDir ($symbol + "-fundingRate.csv")
 $gate = Join-Path $repoRoot "validation\scalping_gate.json"
 
 if (-not (Test-Path $klines)) {
     throw "Eksik veri: $klines"
 }
-if (-not (Test-Path $book)) {
-    throw "Eksik veri: $book"
-}
-
 $argsList = @(
     "-m", "signalgrid.backtest.scalping_cli",
     "--symbol", $symbol,
     "--klines", $klines,
-    "--bookticker", $book,
     "--notional", "100",
     "--gate-output", $gate
 )
@@ -68,7 +62,7 @@ Write-Host ""
 Write-Host "=== SIGNALGRID SCALPING V1 QUANT VALIDATION ==="
 Write-Host "Symbol: $symbol"
 Write-Host "Klines: $klines"
-Write-Host "BookTicker: $book"
+Write-Host "Historical microstructure: PRICE_ACTION_TAKER_ONLY"
 Write-Host ""
 
 & $venvPython @argsList
