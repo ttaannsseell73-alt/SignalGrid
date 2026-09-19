@@ -36,9 +36,7 @@ class FakeRest:
         self.leverage_calls.append((symbol, leverage))
         if self.leverage_failures > 0:
             self.leverage_failures -= 1
-            exc = RuntimeError("Network error: read timed out")
-            exc.__class__.__name__ = "RuntimeError"
-            raise exc
+            raise RuntimeError("Network error: read timed out")
         return FakeResponse({"symbol": symbol, "leverage": leverage})
 
     def current_all_open_orders(self):
