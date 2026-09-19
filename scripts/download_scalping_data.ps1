@@ -47,7 +47,7 @@ Write-Host ""
 Write-Host "=== SIGNALGRID SCALPING HISTORICAL DATA ==="
 Write-Host "Symbol: $symbol"
 Write-Host "Days: $days"
-Write-Host "BookTicker arsivleri buyuk olabilir; indirme suresi baglantiya baglidir."
+Write-Host "Kaynak: Binance USD-M 1m kline arsivleri + yerlesik taker-flow alanlari."
 Write-Host ""
 
 & $venvPython -m signalgrid.ops.download_scalping_data `
