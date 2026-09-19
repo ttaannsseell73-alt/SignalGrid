@@ -90,9 +90,10 @@ class MultiSymbolScanner:
             return self._pass_result(symbol, "STALE_MARKET_DATA", event_age)
         if self.impulse_radar is not None:
             wake = self.impulse_radar.observe(state, now_ms)
-            if wake is None:
+            if wake is not None:
+                self.last_impulse_event[symbol] = wake
+            elif not self.impulse_radar.is_awake(symbol, now_ms):
                 return self._pass_result(symbol, "IMPULSE_RADAR_SLEEP", event_age)
-            self.last_impulse_event[symbol] = wake
         started = monotonic_ns()
         signal, decision = self.engine.evaluate_symbol(state, self.positions_provider())
         compute_ms = (monotonic_ns() - started) / 1_000_000
