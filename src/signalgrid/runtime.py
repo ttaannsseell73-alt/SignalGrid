@@ -19,7 +19,7 @@ from signalgrid.execution.paper import PaperGridBroker
 from signalgrid.market.binance_events import BinanceMarketEventRouter, EventResult
 from signalgrid.market.public_stream import BinancePublicStreamTransport
 from signalgrid.market.warmup import BinanceKlineWarmup, WarmupConfig
-from signalgrid.models import Direction
+from signalgrid.models import Direction, GridMode
 from signalgrid.risk.engine import PositionView
 from signalgrid.scanner import MultiSymbolScanner, ScannerConfig
 from signalgrid.state.store import StateStore
@@ -361,6 +361,13 @@ class SignalGridRuntime:
         for record in GridCampaignRegistry(self.store).records():
             if record.status not in {"ACTIVE", "DEGRADED"}:
                 continue
+            if record.mode == GridMode.NEUTRAL_GRID.value and not record.activated:
+                position = self.store.get_account_position(record.symbol)
+                if position is not None and position.quantity != 0:
+                    # A neutral LIMIT just created exposure. Protection must be
+                    # installed immediately; do not wait for the normal cleanup grace.
+                    await self.campaign_executor.cleanup_if_flat(record.symbol)
+                    continue
             if now_ms - record.updated_at_ms < int(self.config.cleanup_grace_seconds * 1000):
                 continue
             if await self.campaign_executor.cleanup_if_flat(record.symbol):
