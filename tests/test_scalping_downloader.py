@@ -77,3 +77,24 @@ def test_bookticker_sampler_keeps_latest_row_per_minute_and_sorts(tmp_path):
 def test_timestamp_normalizer_accepts_microseconds():
     assert _normalize_timestamp_ms("1750000000000") == 1750000000000
     assert _normalize_timestamp_ms("1750000000000000") == 1750000000000
+
+
+def test_bookticker_sampler_canonicalizes_reordered_header(tmp_path):
+    source = tmp_path / "book-reordered.csv"
+    source.write_text(
+        "event_time,best_ask_qty,best_bid_price,transaction_time,best_ask_price,best_bid_qty,update_id\n"
+        "59000,5,100.0,58999,100.2,4,77\n",
+        encoding="utf-8",
+    )
+    archive = tmp_path / "book-reordered.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.write(source, arcname="inside.csv")
+
+    out = tmp_path / "sampled-reordered.csv"
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        count = _append_bookticker_sampled_zip(archive, writer)
+
+    rows = list(csv.reader(out.open("r", newline="", encoding="utf-8")))
+    assert count == 1
+    assert rows == [["77", "100.0", "4", "100.2", "5", "58999", "59000"]]
