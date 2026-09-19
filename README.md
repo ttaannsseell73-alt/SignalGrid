@@ -2,181 +2,93 @@
 
 Canonical branch: `scalping-v1`.
 
-This branch is the active Binance USDⓈ-M Futures scalping project. The old generic grid/demo strategy is not the active strategy line.
+## One system
 
-## Locked architecture
+```text
+Market Data Hub
+  -> Coin Sonar V2 / Impulse Radar
+  -> Signal Hub (VOL + STRUCTURE + FLOW)
+  -> Risk
+  -> bounded Execution
+```
 
-`Market Data -> Price Action -> Microstructure -> Quant Validation -> Scalping Decision -> Execution -> Risk/Reconciliation`
+Coin Sonar is a wake layer only. It never creates LONG/SHORT trades and never bypasses Risk. Grid logic is execution only.
 
-Primary decision logic:
-- breakout + retest
-- liquidity sweep / failed breakout rejection
-- compression -> breakout
-- spread gate
-- taker-flow imbalance
-- top-of-book imbalance
-- volatility expansion
-- short-lived signal TTL
+The single configuration source is:
 
-Classic RSI/MACD/Stochastic/EMA-cross stacks are not the primary decision engine.
+```text
+src/signalgrid/scalping_profile.py
+```
 
-Grid logic is **execution only**. It is never allowed to create a trade by itself.
+PAPER, historical validation and Demo must use that profile.
 
-## Current Scalping V1 profile
+## Run
 
-- signal TTL: 3 seconds
-- max spread gate: 4 bps
-- structure lookback: 12 closed bars
-- flow confirmation required
-- no neutral-grid signal
-- maximum 3 concurrent Demo positions
-- 3x Demo leverage
-- bounded execution: 75% starter + one pullback level
+Windows canonical entrypoint:
+
+```text
+RUN_SCALPING.cmd
+```
+
+Current stage is **PAPER only**. It uses Binance public market data and does not require API keys.
+
+The PAPER runtime uses:
+- adaptive Coin Sonar turnover/impulse detection,
+- Price Action structure,
+- taker-flow and live book/spread confirmation,
+- fail-closed Risk,
+- bounded paper execution.
+
+Run artifacts are stored under `runs/`.
+
+## Validation
+
+Historical validation is fail-closed and uses the same Coin Sonar -> Signal Hub ordering. Historical archives do not provide equivalent live order-book/spread context, so those fields are not fabricated.
+
+Historical scope:
+
+```text
+SONAR_PRICE_TAKER_NO_BOOK
+```
+
+A fresh gate must match the current profile version:
+
+```text
+SCALPING_V1_20260919_R4_SONAR_LOCK
+```
+
+The previous pre-Sonar results failed the profitability gate and do not unlock Demo.
+
+## Demo
+
+Binance Futures Demo remains locked until the current profile passes the required evidence gates. Demo credentials, when eventually needed, stay only in local `.env`; never commit them.
+
+No live-capital mode is enabled.
+
+## Safety invariants
+
 - no martingale
-- no infinite refill grid
-- fail-closed reconciliation
-
-## One-click historical pipeline
-
-For the first empirical gate on Windows:
-
-```text
-RUN_SCALPING_PIPELINE_30D.cmd
-```
-
-It performs, in order:
-
-1. checksum-verified Binance USD-M daily 1m kline download,
-2. checksum-verified historical `bookTicker` download,
-3. local consolidation under `data/scalping/`,
-4. no-lookahead scalping replay,
-5. base-cost and stressed-cost validation,
-6. gate creation only on PASS.
-
-The 30-day download can be large because historical bookTicker is high-frequency data.
-
-A smaller downloader is also present:
-
-```text
-RUN_SCALPING_DOWNLOAD_7D.cmd
-```
-
-Seven days is for data-pipeline smoke testing only. The canonical gate requires at least 28 days of historical span, so a 7-day sample cannot unlock Demo.
-
-## Quant gate — mandatory before Demo
-
-Demo is locked until historical replay passes the cost-stressed validation gate.
-
-The validator reports:
-- trades / hit rate
-- net expectancy
-- profit factor
-- max drawdown
-- fees + spread + slippage cost share
-- MAE / MFE
-- average holding time
-- performance by setup
-- performance by regime
-- base friction and stressed friction results
-
-Historical `bookTicker` coverage is mandatory. Missing order-book data is not replaced with fake proxies.
-
-Expected local data paths:
-
-```text
-data/scalping/BTCUSDT-1m.csv
-data/scalping/BTCUSDT-bookTicker.csv
-data/scalping/BTCUSDT-fundingRate.csv   # optional
-```
-
-On Windows:
-
-```text
-RUN_SCALPING_VALIDATE.cmd
-```
-
-A passing validation creates the local, gitignored marker:
-
-```text
-validation/scalping_gate.json
-```
-
-The marker is tied to the current strategy profile version. A stale profile cannot unlock Demo.
-
-## Binance Futures Demo
-
-Only after the quant gate passes:
-
-```text
-RUN_SCALPING_DEMO.cmd
-```
-
-or:
-
-```text
-RUN_DEMO.cmd
-```
-
-First local run creates/uses `.env` for:
-
-```text
-BINANCE_DEMO_API_KEY=
-BINANCE_DEMO_API_SECRET=
-```
-
-Secrets are local only and gitignored.
-
-Demo safety:
-- Binance Futures Demo endpoints only
-- One-way Mode required
-- preflight pins 3x leverage
-- non-SignalGrid open orders fail closed
-- positions outside the configured universe fail closed
-- stale SignalGrid Demo state is reconciled/reset
-- protective STOP/TP lifecycle remains mandatory
-
-Default Demo universe:
-
-`BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT`
-
-## Direct CLI validation
-
-```bash
-python -m signalgrid.backtest.scalping_cli \
-  --symbol BTCUSDT \
-  --klines data/scalping/BTCUSDT-1m.csv \
-  --bookticker data/scalping/BTCUSDT-bookTicker.csv \
-  --funding data/scalping/BTCUSDT-fundingRate.csv \
-  --gate-output validation/scalping_gate.json
-```
-
-The gate fails closed unless the supplied historical sample clears the configured minimum evidence and remains positive after stressed costs.
+- no infinite grid
+- max 3 concurrent positions in the current risk profile
+- 3x Demo leverage profile
+- 3-second signal TTL
+- reconciliation fail-closed
+- protective stop / take-profit required
+- stale/missing validation gate cannot start Demo
+- Coin Sonar bypass causes CI failure
 
 ## Tests
 
-```bash
+```text
 python -m pytest -q
 ```
 
-GitHub Actions tests Python 3.11, 3.12 and 3.13 on every push and pull request.
+GitHub Actions runs the suite on Python 3.11, 3.12 and 3.13. Dedicated smoke tests verify public market streaming and the canonical PAPER chain.
 
-No live-capital mode is enabled in Scalping V1.
-
-
-## Multi-symbol robustness pipeline
-
-The preferred generalization check is now:
+Research-only matrices and abandoned hypothesis runners are preserved on:
 
 ```text
-RUN_SCALPING_PORTFOLIO_30D.cmd
+research-archive-20260919
 ```
 
-Default symbols:
-
-`BTCUSDT, ETHUSDT, SOLUSDT`
-
-For each symbol the pipeline downloads 30 days of Binance USD-M 1m klines and runs the same no-lookahead scalping validation. The portfolio gate is created only if **every requested symbol** passes its own base-cost, stressed-cost, OOS and parameter-robustness checks.
-
-The historical archive scope is intentionally `PRICE_ACTION_TAKER_ONLY`: current validation uses closed-bar price action plus the taker-buy quote field present in Binance kline archives. It does not synthesize missing historical order-book microstructure. Spread/book/absorption gates remain active in forward Demo trading.
-
-Parameter robustness uses a 3x3 neighborhood around the locked score and expansion thresholds. At least 60% of nearby parameter variants must retain positive OOS stressed expectancy. This is intended to reject knife-edge fits rather than optimize for a single best parameter set.
+They are not part of the active scalping runtime.
