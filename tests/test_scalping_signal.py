@@ -135,9 +135,10 @@ def test_price_impact_efficiency_flags_strong_flow_without_progress():
 
 def test_scalping_engine_rejects_absorbed_aggressive_flow():
     s = _base_state()
-    prior_high = max(b.high for b in list(s.bars)[-12:])
-    # Accepted upside breakout but almost no close-to-close price progress.
-    s.add_bar(Bar(100.0, prior_high + 0.4, 99.98, prior_high + 0.20, 2000))
+    prior_low = min(b.low for b in list(s.bars)[-12:])
+    # Long liquidity sweep with strong aggressive buy flow, but almost no
+    # close-to-close price progress: this is the absorption case.
+    s.add_bar(Bar(100.0, 100.10, prior_low - 0.30, 100.01, 2000))
     s.best_bid, s.best_ask = 100.015, 100.025
     s.taker_buy_quote, s.taker_sell_quote = 85.0, 15.0
     s.bid_depth, s.ask_depth = 70.0, 30.0
