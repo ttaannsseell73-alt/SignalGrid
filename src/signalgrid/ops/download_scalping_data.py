@@ -36,6 +36,11 @@ def archive_url(dataset: str, symbol: str, day: date, interval: str = "1m") -> s
             f"{BASE_URL}/aggTrades/{symbol}/"
             f"{symbol}-aggTrades-{stamp}.zip"
         )
+    if dataset == "bookDepth":
+        return (
+            f"{BASE_URL}/bookDepth/{symbol}/"
+            f"{symbol}-bookDepth-{stamp}.zip"
+        )
     raise ValueError(f"unsupported dataset: {dataset}")
 
 
@@ -231,6 +236,40 @@ def _append_bookticker_sampled_zip(
     return len(latest)
 
 
+def _append_bookdepth_zip(zip_path: Path, writer: csv.writer) -> int:
+    """Append Binance bookDepth rows while stripping per-archive headers.
+
+    bookDepth timestamps are human-readable UTC strings, so the generic numeric
+    first-column filter used by kline/aggTrade archives cannot be used here.
+    """
+    written = 0
+    with zipfile.ZipFile(zip_path) as archive:
+        name = _single_csv_name(archive, zip_path.name)
+        with archive.open(name, "r") as raw:
+            text = io.TextIOWrapper(raw, encoding="utf-8-sig", newline="")
+            reader = csv.reader(text)
+            first = next(reader, None)
+            if first is None:
+                return 0
+            header = [x.strip().lower() for x in first]
+            has_header = "timestamp" in header and "percentage" in header
+            rows = reader if has_header else chain((first,), reader)
+            for row in rows:
+                if len(row) < 4:
+                    continue
+                try:
+                    percentage = int(float(row[1]))
+                    depth = float(row[2])
+                    notional = float(row[3])
+                except (ValueError, TypeError):
+                    continue
+                if percentage == 0 or abs(percentage) > 5 or depth < 0 or notional < 0:
+                    continue
+                writer.writerow([row[0].strip(), percentage, depth, notional])
+                written += 1
+    return written
+
+
 def _days(start: date, end: date):
     current = start
     while current <= end:
@@ -275,6 +314,8 @@ def download_dataset(
                         raise
                     if dataset == "bookTicker":
                         rows += _append_bookticker_sampled_zip(zip_path, writer)
+                    elif dataset == "bookDepth":
+                        rows += _append_bookdepth_zip(zip_path, writer)
                     else:
                         rows += _append_zip_csv(zip_path, writer)
                     archives += 1
