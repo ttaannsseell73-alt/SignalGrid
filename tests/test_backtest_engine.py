@@ -116,3 +116,30 @@ def test_same_bar_stop_and_target_uses_conservative_stop_first():
     )
     assert result.metrics.trades == 1
     assert result.trades[0].exit_reason == "INVALIDATION_STOP"
+
+
+def test_reward_risk_take_profit_uses_actual_entry_stop_distance():
+    rows = [row(0, 100, 101, 99, 100)]
+    for i in range(1, 16):
+        rows.append(row(i, 100.0, 100.2, 99.8, 100.0))
+    rows.append(row(16, 100.0, 103.0, 99.5, 102.0))
+    cfg = BacktestConfig(
+        taker_fee_bps=0,
+        assumed_spread_bps=0,
+        slippage_bps=0,
+        max_holding_bars=2,
+        take_profit_enabled=True,
+        min_take_profit_bps=0.0,
+        tp_reward_risk_multiple=2.0,
+    )
+    result = run_backtest(
+        rows,
+        backtest_config=cfg,
+        engine=OneShotEngine(invalidation=99.0, emit_on=15),
+    )
+    assert result.metrics.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "TAKE_PROFIT"
+    # Entry 100, stop 99 => 100 bps risk. 2R target => 102.
+    assert round(trade.exit_price, 6) == 102.0
+    assert round(trade.initial_stop_bps, 6) == 100.0
