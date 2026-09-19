@@ -1,6 +1,7 @@
 import inspect
 from pathlib import Path
 
+from signalgrid.backtest.scalping_validation import historical_scalping_engine
 from signalgrid.ops.run_scalping_demo import build_scalping_demo_runtime
 from signalgrid.scanner import MultiSymbolScanner
 from signalgrid.sonar.impulse_radar import ImpulseRadar, ImpulseRadarConfig
@@ -26,3 +27,15 @@ def test_project_state_declares_coin_sonar_v2_locked():
     text = Path("PROJECT_STATE.md").read_text(encoding="utf-8")
     assert "## LOCKED COIN SONAR V2" in text
     assert "Market Data Hub -> Impulse Radar wake event -> existing Signal Hub" in text
+
+
+def test_historical_quant_path_is_also_sonar_gated():
+    from signalgrid.signals.scalping import ScalpingConfig
+    from signalgrid.sonar.gate import SonarGatedSignalEngine
+
+    engine = historical_scalping_engine(
+        ScalpingConfig(require_book_microstructure=False)
+    )
+    assert isinstance(engine, SonarGatedSignalEngine)
+    assert engine.impulse_radar.config.turnover_mode == "BUCKET_TOTAL"
+    assert engine.impulse_radar.config.require_spread is False
