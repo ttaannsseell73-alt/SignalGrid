@@ -115,6 +115,10 @@ class PaperGridBroker:
             if ask <= plan.take_profit:
                 return self._close(campaign, ask, "TAKE_PROFIT", event_ms)
 
+        if plan.expires_at_ms and event_ms is not None and event_ms >= plan.expires_at_ms:
+            expiry_price = bid if plan.direction is Direction.LONG else ask
+            return self._close(campaign, expiry_price, "MAX_HOLD", event_ms)
+
         filled = campaign.filled_indices
         for level in plan.entries[1:]:
             if level.index in filled:

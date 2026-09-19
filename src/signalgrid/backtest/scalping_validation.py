@@ -253,7 +253,7 @@ def run_scalping_validation(
         tp_min_spacing_bps=4.0,
         tp_max_spacing_bps=25.0,
         tp_steps=1.2,
-        min_take_profit_bps=40.0,
+        min_take_profit_bps=30.0,
     )
     stress_cfg = BacktestConfig(
         starting_equity=10_000.0,
@@ -268,7 +268,7 @@ def run_scalping_validation(
         tp_min_spacing_bps=4.0,
         tp_max_spacing_bps=25.0,
         tp_steps=1.2,
-        min_take_profit_bps=40.0,
+        min_take_profit_bps=30.0,
     )
 
     base = run_backtest(

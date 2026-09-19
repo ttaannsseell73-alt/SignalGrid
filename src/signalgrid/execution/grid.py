@@ -24,6 +24,7 @@ class GridConfig:
     neutral_levels_per_side: int = 2
     neutral_stop_steps: float = 3.0
     neutral_ttl_seconds: float = 300.0
+    directional_ttl_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         if not 1 <= self.entry_levels <= 6:
@@ -47,6 +48,8 @@ class GridConfig:
             raise ValueError("neutral_stop_steps must be beyond the deepest neutral entry")
         if self.neutral_ttl_seconds <= 0:
             raise ValueError("neutral_ttl_seconds must be positive")
+        if self.directional_ttl_seconds < 0:
+            raise ValueError("directional_ttl_seconds must be >= 0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +184,14 @@ def build_grid_plan(
 
     target_bps = max(spacing_bps * cfg.take_profit_steps, cfg.min_take_profit_bps)
     take_profit = reference * (1.0 + side * target_bps / 10_000.0)
+    event_ms = state.last_event_time_ms
+    if event_ms is None:
+        raise GridPlanError("market event timestamp is required")
+    expires_at_ms = (
+        event_ms + int(cfg.directional_ttl_seconds * 1000)
+        if cfg.directional_ttl_seconds > 0
+        else 0
+    )
     return GridPlan(
         campaign_id=_campaign_id(signal, state),
         symbol=signal.symbol.upper(),
@@ -193,4 +204,5 @@ def build_grid_plan(
         take_profit=take_profit,
         entries=tuple(entries),
         mode=signal.grid_mode,
+        expires_at_ms=expires_at_ms,
     )

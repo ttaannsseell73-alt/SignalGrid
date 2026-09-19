@@ -74,6 +74,7 @@ def test_canonical_sonar_signal_risk_paper_chain_opens_bounded_campaign(tmp_path
         assert campaign is not None
         assert campaign.plan.direction is Direction.LONG
         assert campaign.plan.leverage == 3
+        assert campaign.plan.expires_at_ms > state.last_event_time_ms
         assert len(campaign.plan.entries) == 1
         assert campaign.plan.entries[0].kind == "MARKET"
         assert campaign.fills

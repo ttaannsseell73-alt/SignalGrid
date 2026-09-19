@@ -259,3 +259,28 @@ def test_take_profit_floor_overrides_too_small_volatility_target():
     )
     target_bps = (plan.take_profit / plan.reference_price - 1.0) * 10_000.0
     assert round(target_bps, 6) == 30.0
+
+
+def test_directional_scalping_plan_can_carry_bounded_ttl():
+    s = state()
+    plan = build_grid_plan(
+        signal(s),
+        decision(),
+        s,
+        GridConfig(
+            entry_levels=1,
+            starter_fraction=1.0,
+            directional_ttl_seconds=360.0,
+        ),
+    )
+    assert plan.expires_at_ms == s.last_event_time_ms + 360_000
+
+    broker = PaperGridBroker(suppress_same_event_reopen=False)
+    campaign = broker.open_campaign(plan)
+    s.last_event_time_ms = plan.expires_at_ms
+    s.best_bid = plan.reference_price - 0.01
+    s.best_ask = plan.reference_price + 0.01
+    closed = broker.on_state(s)
+    assert closed is not None
+    assert closed.status == "CLOSED"
+    assert closed.close_reason == "MAX_HOLD"
