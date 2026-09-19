@@ -23,6 +23,7 @@ class ScalpingValidationGate:
     min_oos_expectancy_usdt: float = 0.0
     min_oos_stress_expectancy_usdt: float = 0.0
     min_oos_profit_factor: float = 1.00
+    min_robust_positive_fraction: float = 0.60
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,16 @@ class SliceMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class RobustnessMetrics:
+    candidates: int
+    positive_oos_stress: int
+    positive_fraction: float
+    median_oos_stress_expectancy: float
+    worst_oos_stress_expectancy: float
+    best_oos_stress_expectancy: float
+
+
+@dataclass(frozen=True, slots=True)
 class ScalpingValidationReport:
     base: BacktestResult
     stress: BacktestResult
@@ -47,6 +58,7 @@ class ScalpingValidationReport:
     history_span_days: float
     oos_start_ms: int | None
     historical_microstructure_scope: str
+    robustness: RobustnessMetrics
     passed: bool
     reasons: tuple[str, ...]
 
@@ -73,6 +85,60 @@ def _slice_metrics(trades, attr: str) -> tuple[SliceMetrics, ...]:
             )
         )
     return tuple(out)
+
+
+def scalping_parameter_neighborhood(base: ScalpingConfig) -> tuple[ScalpingConfig, ...]:
+    """Small local perturbation set used to reject knife-edge parameter fits."""
+    out: list[ScalpingConfig] = []
+    for score_delta in (-0.03, 0.0, 0.03):
+        for expansion_delta in (-0.05, 0.0, 0.05):
+            out.append(
+                replace(
+                    base,
+                    min_score=min(0.95, max(0.50, base.min_score + score_delta)),
+                    min_expansion=max(0.50, base.min_expansion + expansion_delta),
+                )
+            )
+    return tuple(out)
+
+
+def _robustness_metrics(
+    rows: Sequence[HistoricalBar],
+    *,
+    base_config: ScalpingConfig,
+    backtest_config: BacktestConfig,
+    funding_points: Sequence[FundingPoint],
+    trade_start_ms: int | None,
+) -> RobustnessMetrics:
+    expectations: list[float] = []
+    for candidate in scalping_parameter_neighborhood(base_config):
+        result = run_backtest(
+            rows,
+            backtest_config=backtest_config,
+            funding_points=funding_points,
+            engine=ScalpingSignalEngine(candidate),
+            trade_start_ms=trade_start_ms,
+        )
+        expectations.append(result.metrics.expectancy)
+
+    ordered = sorted(expectations)
+    positive = sum(1 for value in expectations if value > 0)
+    count = len(expectations)
+    if count == 0:
+        return RobustnessMetrics(0, 0, 0.0, 0.0, 0.0, 0.0)
+    midpoint = count // 2
+    if count % 2:
+        median_value = ordered[midpoint]
+    else:
+        median_value = (ordered[midpoint - 1] + ordered[midpoint]) / 2.0
+    return RobustnessMetrics(
+        candidates=count,
+        positive_oos_stress=positive,
+        positive_fraction=positive / count,
+        median_oos_stress_expectancy=median_value,
+        worst_oos_stress_expectancy=min(ordered),
+        best_oos_stress_expectancy=max(ordered),
+    )
 
 
 def run_scalping_validation(
@@ -164,6 +230,14 @@ def run_scalping_validation(
         trade_start_ms=oos_start_ms,
     )
 
+    robustness = _robustness_metrics(
+        rows,
+        base_config=historical_sig_cfg,
+        backtest_config=stress_cfg,
+        funding_points=funding_points,
+        trade_start_ms=oos_start_ms,
+    )
+
     reasons: list[str] = []
     history_span_days = 0.0
     if rows:
@@ -218,6 +292,11 @@ def run_scalping_validation(
         reasons.append(
             f"OOS_PROFIT_FACTOR:{om.profit_factor:.6f}<{gate_cfg.min_oos_profit_factor:.6f}"
         )
+    if robustness.positive_fraction < gate_cfg.min_robust_positive_fraction:
+        reasons.append(
+            "ROBUSTNESS_POSITIVE_FRACTION:"
+            f"{robustness.positive_fraction:.6f}<{gate_cfg.min_robust_positive_fraction:.6f}"
+        )
 
     return ScalpingValidationReport(
         base=base,
@@ -229,6 +308,7 @@ def run_scalping_validation(
         history_span_days=history_span_days,
         oos_start_ms=oos_start_ms,
         historical_microstructure_scope="PRICE_ACTION_TAKER_ONLY",
+        robustness=robustness,
         passed=not reasons,
         reasons=tuple(reasons),
     )
