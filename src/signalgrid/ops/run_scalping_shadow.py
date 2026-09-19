@@ -264,6 +264,8 @@ async def record_shadow(
     url = combined_stream_url(symbols)
     started = time.monotonic()
     messages = 0
+    event_counts: dict[str, int] = {}
+    stream_counts: dict[str, int] = {}
 
     try:
         async with websockets.connect(
@@ -282,11 +284,14 @@ async def record_shadow(
                 except asyncio.TimeoutError:
                     continue
                 payload = json.loads(raw)
+                stream_name = str(payload.get("stream", "raw"))
+                stream_counts[stream_name] = stream_counts.get(stream_name, 0) + 1
                 data = payload.get("data", payload)
                 symbol = str(data.get("s", "")).upper()
                 if symbol not in acc:
                     continue
-                event = data.get("e")
+                event = str(data.get("e") or "unknown")
+                event_counts[event] = event_counts.get(event, 0) + 1
                 event_ms = int(data.get("E") or data.get("T") or int(time.time() * 1000))
                 row = None
                 if event == "aggTrade":
@@ -325,6 +330,8 @@ async def record_shadow(
             "duration_seconds": duration_seconds,
             "messages": messages,
             "rows": store.count(),
+            "event_counts": event_counts,
+            "stream_counts": stream_counts,
             "db_path": str(db_path),
         }
     finally:
