@@ -102,6 +102,22 @@ def scalping_parameter_neighborhood(base: ScalpingConfig) -> tuple[ScalpingConfi
     return tuple(out)
 
 
+def _robustness_rows(
+    rows: Sequence[HistoricalBar],
+    trade_start_ms: int | None,
+    *,
+    warmup_bars: int = 80,
+) -> Sequence[HistoricalBar]:
+    if trade_start_ms is None or not rows:
+        return rows
+    ordered = sorted(rows, key=lambda row: row.open_time_ms)
+    first_oos = next(
+        (i for i, row in enumerate(ordered) if row.open_time_ms >= trade_start_ms),
+        len(ordered),
+    )
+    return ordered[max(0, first_oos - warmup_bars):]
+
+
 def _robustness_metrics(
     rows: Sequence[HistoricalBar],
     *,
@@ -111,9 +127,10 @@ def _robustness_metrics(
     trade_start_ms: int | None,
 ) -> RobustnessMetrics:
     expectations: list[float] = []
+    robustness_rows = _robustness_rows(rows, trade_start_ms)
     for candidate in scalping_parameter_neighborhood(base_config):
         result = run_backtest(
-            rows,
+            robustness_rows,
             backtest_config=backtest_config,
             funding_points=funding_points,
             engine=ScalpingSignalEngine(candidate),
