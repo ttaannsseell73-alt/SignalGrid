@@ -152,3 +152,30 @@ def test_scalping_engine_rejects_absorbed_aggressive_flow():
     sig = ScalpingSignalEngine(cfg).evaluate(s)
     assert sig.direction is Direction.PASS
     assert sig.setup == "SCALP_ABSORPTION"
+
+
+def test_historical_mode_does_not_fabricate_missing_book_microstructure():
+    s = _base_state()
+    prior_low = min(b.low for b in list(s.bars)[-12:])
+    s.add_bar(Bar(100.0, 100.20, prior_low - 0.35, 100.08, 1800))
+    s.best_bid = None
+    s.best_ask = None
+    s.bid_depth = 0.0
+    s.ask_depth = 0.0
+
+    live_sig = ScalpingSignalEngine(
+        ScalpingConfig(min_score=0.45, max_stop_bps=250.0)
+    ).evaluate(s)
+    assert live_sig.direction is Direction.PASS
+    assert live_sig.setup == "SCALP_LIQUIDITY_GATE"
+
+    historical_sig = ScalpingSignalEngine(
+        ScalpingConfig(
+            min_score=0.45,
+            max_stop_bps=250.0,
+            require_book_microstructure=False,
+            absorption_flow_threshold=0.95,
+        )
+    ).evaluate(s)
+    assert historical_sig.direction is Direction.LONG
+    assert historical_sig.grid_mode is GridMode.LONG_GRID
