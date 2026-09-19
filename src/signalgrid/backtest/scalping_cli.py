@@ -5,12 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from signalgrid.backtest.data import (
-    attach_book_snapshots,
-    load_binance_klines_csv,
-    load_book_ticker_csv,
-    load_funding_rate_csv,
-)
+from signalgrid.backtest.data import load_binance_klines_csv, load_funding_rate_csv
 from signalgrid.backtest.scalping_validation import (
     ScalpingValidationGate,
     run_scalping_validation,
@@ -24,9 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--symbol", required=True)
     p.add_argument("--klines", required=True, help="Binance USD-M 1m kline CSV")
-    p.add_argument("--bookticker", required=True, help="Binance USD-M historical bookTicker CSV")
     p.add_argument("--funding", help="Optional Binance fundingRate CSV")
-    p.add_argument("--book-max-age-ms", type=int, default=2_000)
     p.add_argument("--notional", type=float, default=100.0)
     p.add_argument("--min-trades", type=int, default=50)
     p.add_argument("--min-profit-factor", type=float, default=1.05)
@@ -36,16 +29,6 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     bars = load_binance_klines_csv(args.klines, args.symbol)
-    books = load_book_ticker_csv(args.bookticker, args.symbol)
-    bars = attach_book_snapshots(bars, books, max_age_ms=args.book_max_age_ms)
-    missing = sum(1 for b in bars if not b.has_book)
-    if missing:
-        raise SystemExit(
-            "book coverage incomplete: "
-            f"{missing}/{len(bars)} bars lack an at-or-before snapshot "
-            f"within {args.book_max_age_ms} ms"
-        )
-
     funding = load_funding_rate_csv(args.funding, args.symbol) if args.funding else []
     gate = ScalpingValidationGate(
         min_trades=args.min_trades,
@@ -64,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         "strategy": "SCALPING_V1",
         "symbol": args.symbol.upper(),
         "bars": len(bars),
+        "historical_microstructure_scope": report.historical_microstructure_scope,
         "gate_passed": report.passed,
         "gate_reasons": list(report.reasons),
         "history_span_days": report.history_span_days,
@@ -86,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
                     "profile_version": SCALPING_PROFILE_VERSION,
                     "symbol": args.symbol.upper(),
                     "bars": len(bars),
+                    "historical_microstructure_scope": report.historical_microstructure_scope,
                     "history_span_days": report.history_span_days,
                     "base": asdict(report.base.metrics),
                     "stress": asdict(report.stress.metrics),
