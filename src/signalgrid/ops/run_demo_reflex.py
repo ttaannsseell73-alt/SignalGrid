@@ -26,6 +26,9 @@ from signalgrid.state.reconciliation import BinanceRestSnapshotProvider
 # the stream endpoint is the matching Demo Futures stream host.
 DEMO_REST_URL = "https://demo-fapi.binance.com"
 DEMO_WS_STREAM_URL = "wss://demo-fstream.binance.com"
+DEMO_REST_TIMEOUT_MS = 5_000
+DEMO_REST_RETRIES = 3
+DEMO_REST_BACKOFF_MS = 500
 
 DEFAULT_STRESS_SYMBOLS = (
     "BTCUSDT",
@@ -162,6 +165,32 @@ def _dual_side_position(response: Any) -> bool | None:
     return None if value is None else bool(value)
 
 
+def _is_transient_network_error(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    return (
+        "network" in name
+        or "timeout" in name
+        or "read timed out" in text
+        or "connection" in text
+        or "temporarily unavailable" in text
+    )
+
+
+def _call_idempotent_with_retry(call, *args, attempts: int = 3, **kwargs):
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return call(*args, **kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if not _is_transient_network_error(exc) or attempt + 1 >= attempts:
+                raise
+            sleep(0.5 * (2 ** attempt))
+    assert last_exc is not None
+    raise last_exc
+
+
 def _is_owned_client_id(value: str) -> bool:
     return bool(value) and value.startswith("sg-")
 
@@ -283,7 +312,7 @@ def _reset_stale_demo_state(rest_api: Any, allowed_symbols: tuple[str, ...]) -> 
 
 def preflight_demo(rest_api: Any, symbols: tuple[str, ...], leverage: int = 3) -> dict[str, int]:
     """Verify account mode, reset stale Demo test state, then pin leverage."""
-    position_mode = rest_api.get_current_position_mode()
+    position_mode = _call_idempotent_with_retry(rest_api.get_current_position_mode)
     dual_side = _dual_side_position(position_mode)
     if dual_side is None:
         raise RuntimeError("Demo position mode could not be verified")
@@ -292,7 +321,11 @@ def preflight_demo(rest_api: Any, symbols: tuple[str, ...], leverage: int = 3) -
 
     cleanup = _reset_stale_demo_state(rest_api, symbols)
     for symbol in symbols:
-        rest_api.change_initial_leverage(symbol=symbol, leverage=leverage)
+        _call_idempotent_with_retry(
+            rest_api.change_initial_leverage,
+            symbol=symbol,
+            leverage=leverage,
+        )
     return cleanup
 
 
@@ -318,7 +351,14 @@ def _demo_rest_api(api_key: str, api_secret: str) -> Any:
         DerivativesTradingUsdsFutures,
     )
 
-    cfg = ConfigurationRestAPI(api_key=api_key, api_secret=api_secret, base_path=DEMO_REST_URL)
+    cfg = ConfigurationRestAPI(
+        api_key=api_key,
+        api_secret=api_secret,
+        base_path=DEMO_REST_URL,
+        timeout=DEMO_REST_TIMEOUT_MS,
+        retries=DEMO_REST_RETRIES,
+        backoff=DEMO_REST_BACKOFF_MS,
+    )
     return DerivativesTradingUsdsFutures(config_rest_api=cfg).rest_api
 
 
