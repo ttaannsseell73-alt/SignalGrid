@@ -6,6 +6,10 @@ from typing import Sequence
 
 from signalgrid.backtest.data import FundingPoint, HistoricalBar
 from signalgrid.backtest.engine import BacktestConfig, BacktestResult, run_backtest
+from signalgrid.scalping_profile import (
+    SCALPING_HISTORICAL_SONAR_CONFIG,
+    SCALPING_SIGNAL_CONFIG,
+)
 from signalgrid.signals.scalping import ScalpingConfig, ScalpingSignalEngine
 from signalgrid.sonar.gate import SonarGatedSignalEngine
 from signalgrid.sonar.impulse_radar import ImpulseRadar, ImpulseRadarConfig
@@ -68,15 +72,8 @@ class ScalpingValidationReport:
 
 
 def historical_sonar_config() -> ImpulseRadarConfig:
-    """Historical Coin Sonar using only fields present in Binance kline archives.
-
-    Spread/book liquidity is intentionally unavailable and not synthesized.
-    Turnover is interpreted as one completed kline bucket per evaluation.
-    """
-    return ImpulseRadarConfig(
-        turnover_mode="BUCKET_TOTAL",
-        require_spread=False,
-    )
+    """Return the canonical historical projection of Coin Sonar V2."""
+    return SCALPING_HISTORICAL_SONAR_CONFIG
 
 
 def historical_scalping_engine(
@@ -202,7 +199,7 @@ def run_scalping_validation(
     is explicitly not synthesized; those gates are validated forward before Demo.
     """
 
-    sig_cfg = signal_config or ScalpingConfig()
+    sig_cfg = signal_config or SCALPING_SIGNAL_CONFIG
     # Binance's current public USD-M archives do not provide a reliable current
     # historical bookTicker series. Historical validation therefore disables
     # unavailable book/spread features explicitly instead of synthesizing them.
