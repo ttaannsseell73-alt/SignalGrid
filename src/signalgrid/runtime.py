@@ -315,7 +315,7 @@ class SignalGridRuntime:
         if result is None:
             return
         self.stats.evaluations += 1
-        if self.scanner.impulse_radar is not None:
+        if getattr(self.scanner, "impulse_radar", None) is not None:
             if result.reason == "IMPULSE_RADAR_SLEEP":
                 self.stats.sonar_sleeps += 1
             else:
