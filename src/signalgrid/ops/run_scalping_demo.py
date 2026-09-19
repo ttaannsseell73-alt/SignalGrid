@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Iterable
 
 from signalgrid.engine import SignalGridEngine
-from signalgrid.execution.grid import GridConfig
 from signalgrid.ops.run_demo_reflex import (
     DEMO_REST_URL,
     DEMO_WS_STREAM_URL,
@@ -17,54 +16,18 @@ from signalgrid.ops.run_demo_reflex import (
     preflight_demo,
 )
 from signalgrid.ops.run_soak import run_soak_session
-from signalgrid.risk.engine import RiskConfig, RiskEngine
+from signalgrid.risk.engine import RiskEngine
 from signalgrid.runtime import RuntimeConfig, RuntimeMode, SignalGridRuntime
 from signalgrid.scanner import MultiSymbolScanner, ScannerConfig
+from signalgrid.scalping_profile import (
+    DEFAULT_SCALPING_SYMBOLS,
+    SCALPING_GRID_CONFIG,
+    SCALPING_RISK_CONFIG,
+    SCALPING_SIGNAL_CONFIG,
+    SCALPING_SONAR_CONFIG,
+)
 from signalgrid.sonar.impulse_radar import ImpulseRadar
-from signalgrid.signals.scalping import (
-    SCALPING_PROFILE_VERSION,
-    ScalpingConfig,
-    ScalpingSignalEngine,
-)
-
-
-DEFAULT_SCALPING_SYMBOLS = ("BTCUSDT",)
-
-SCALPING_SIGNAL_CONFIG = ScalpingConfig(
-    structure_lookback=12,
-    compression_lookback=8,
-    compression_baseline=30,
-    compression_ratio_max=0.78,
-    retest_tolerance_bps=8.0,
-    max_spread_bps=4.0,
-    min_natr_bps=4.0,
-    max_natr_bps=180.0,
-    min_expansion=0.90,
-    strong_expansion=1.35,
-    min_directional_flow=0.03,
-    min_score=0.62,
-    min_stop_bps=3.0,
-    max_stop_bps=120.0,
-    ttl_seconds=3.0,
-)
-
-SCALPING_RISK_CONFIG = RiskConfig(
-    max_positions=3,
-    max_total_notional_usdt=360.0,
-    base_notional_usdt=60.0,
-    max_notional_per_trade_usdt=120.0,
-    leverage=3,
-)
-
-SCALPING_GRID_CONFIG = GridConfig(
-    entry_levels=1,
-    starter_fraction=1.0,
-    spacing_natr_multiplier=0.20,
-    min_spacing_bps=4.0,
-    max_spacing_bps=25.0,
-    take_profit_steps=1.2,
-    min_take_profit_bps=30.0,
-)
+from signalgrid.signals.scalping import SCALPING_PROFILE_VERSION, ScalpingSignalEngine
 
 
 def _parse_symbols(text: str) -> tuple[str, ...]:
@@ -151,7 +114,7 @@ def build_scalping_demo_runtime(
         ),
         positions_provider=base.positions_provider,
         now_ms=base.now_ms,
-        impulse_radar=ImpulseRadar(),
+        impulse_radar=ImpulseRadar(SCALPING_SONAR_CONFIG),
     )
     runtime.grid_config = SCALPING_GRID_CONFIG
 
