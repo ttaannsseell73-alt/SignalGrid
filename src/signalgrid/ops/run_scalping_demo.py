@@ -27,13 +27,7 @@ from signalgrid.signals.scalping import (
 )
 
 
-DEFAULT_SCALPING_SYMBOLS = (
-    "BTCUSDT",
-    "ETHUSDT",
-    "SOLUSDT",
-    "BNBUSDT",
-    "XRPUSDT",
-)
+DEFAULT_SCALPING_SYMBOLS = ("BTCUSDT",)
 
 SCALPING_SIGNAL_CONFIG = ScalpingConfig(
     structure_lookback=12,
@@ -99,6 +93,18 @@ def build_scalping_demo_runtime(
     db_path: str,
 ) -> SignalGridRuntime:
     gate_payload = _require_validation_gate()
+    validated_symbols = {
+        str(symbol).upper()
+        for symbol in gate_payload.get("validated_symbols", [])
+        if str(symbol).strip()
+    }
+    requested_symbols = {symbol.upper() for symbol in symbols}
+    unvalidated = sorted(requested_symbols - validated_symbols)
+    if unvalidated:
+        raise RuntimeError(
+            "SCALPING_UNVALIDATED_SYMBOLS:" + ",".join(unvalidated)
+        )
+
     api_key = os.getenv("BINANCE_DEMO_API_KEY", "").strip()
     api_secret = os.getenv("BINANCE_DEMO_API_SECRET", "").strip()
     if not api_key or not api_secret:
