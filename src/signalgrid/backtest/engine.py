@@ -9,6 +9,7 @@ from signalgrid.backtest.data import FundingPoint, HistoricalBar
 from signalgrid.market.state import SymbolState
 from signalgrid.models import Direction, Signal
 from signalgrid.signals.engine import SignalConfig, SignalEngine
+from signalgrid.signals.volatility import natr
 
 
 class BacktestDataQualityError(ValueError):
@@ -28,6 +29,11 @@ class BacktestConfig:
     slippage_bps: float = 1.0
     max_holding_bars: int = 12
     require_book: bool = True
+    take_profit_enabled: bool = False
+    tp_spacing_natr_multiplier: float = 0.20
+    tp_min_spacing_bps: float = 4.0
+    tp_max_spacing_bps: float = 25.0
+    tp_steps: float = 1.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +84,7 @@ class BacktestResult:
     trades: tuple[SimulatedTrade, ...]
     metrics: BacktestMetrics
     skipped_invalidated_before_entry: int = 0
+    skipped_target_before_entry: int = 0
 
 
 def _side(direction: Direction) -> int:
@@ -120,6 +127,50 @@ def _invalid_before_entry(row: HistoricalBar, signal: Signal) -> bool:
     if signal.direction is Direction.SHORT:
         return row.open >= signal.invalidation
     return True
+
+
+def _take_profit_price(
+    state: SymbolState,
+    signal: Signal,
+    cfg: BacktestConfig,
+) -> float | None:
+    if not cfg.take_profit_enabled:
+        return None
+    bars = list(state.bars)
+    nv = natr(bars)
+    if nv is None or nv <= 0:
+        return None
+    if (
+        state.best_bid is not None
+        and state.best_ask is not None
+        and state.best_bid > 0
+        and state.best_ask >= state.best_bid
+    ):
+        reference = (state.best_bid + state.best_ask) / 2.0
+    elif bars and bars[-1].close > 0:
+        reference = bars[-1].close
+    else:
+        return None
+
+    spacing_bps = min(
+        cfg.tp_max_spacing_bps,
+        max(cfg.tp_min_spacing_bps, nv * 10_000.0 * cfg.tp_spacing_natr_multiplier),
+    )
+    target_bps = spacing_bps * cfg.tp_steps
+    side = _side(signal.direction)
+    return reference * (1.0 + side * target_bps / 10_000.0)
+
+
+def _target_reached(row: HistoricalBar, direction: Direction, target: float | None) -> bool:
+    if target is None:
+        return False
+    return row.high >= target if direction is Direction.LONG else row.low <= target
+
+
+def _target_before_entry(row: HistoricalBar, direction: Direction, target: float | None) -> bool:
+    if target is None:
+        return False
+    return row.open >= target if direction is Direction.LONG else row.open <= target
 
 
 def metrics_from_trades(trades: Sequence[SimulatedTrade], starting_equity: float) -> BacktestMetrics:
@@ -187,20 +238,23 @@ def run_backtest(
     evaluator = engine or SignalEngine(signal_config)
     state = SymbolState(symbol)
     trades: list[SimulatedTrade] = []
-    pending: tuple[Signal, HistoricalBar] | None = None
+    pending: tuple[Signal, HistoricalBar, float | None] | None = None
     position: dict[str, object] | None = None
     skipped = 0
+    skipped_target = 0
     fee_rate = cfg.taker_fee_bps / 10_000.0
 
     for idx, row in enumerate(ordered):
         # 1) Orders decided on the prior bar may execute only now, at this bar's open.
         if position is None and pending is not None:
-            sig, signal_row = pending
+            sig, signal_row, take_profit = pending
             pending = None
             in_window = (trade_start_ms is None or row.open_time_ms >= trade_start_ms) and (trade_end_ms is None or row.open_time_ms < trade_end_ms)
             if in_window:
                 if _invalid_before_entry(row, sig):
                     skipped += 1
+                elif _target_before_entry(row, sig.direction, take_profit):
+                    skipped_target += 1
                 else:
                     px = _entry_price(row.open, sig.direction, cfg)
                     qty = cfg.notional_usdt / px
@@ -208,6 +262,7 @@ def run_backtest(
                         "signal": sig, "signal_time_ms": signal_row.close_time_ms,
                         "entry_index": idx, "entry_time_ms": row.open_time_ms,
                         "entry_price": px, "qty": qty,
+                        "take_profit": take_profit,
                         "mae_usdt": 0.0, "mfe_usdt": 0.0,
                     }
 
@@ -228,9 +283,14 @@ def run_backtest(
             position["mae_usdt"] = max(float(position["mae_usdt"]), adverse)
             exit_reason: str | None = None
             exit_base: float | None = None
+            # Conservative OHLC ordering: if stop and target are both touched
+            # in the same bar, assume the adverse stop occurs first.
             if _stop_hit(row, sig.direction, sig.invalidation):
                 exit_reason = "INVALIDATION_STOP"
                 exit_base = float(sig.invalidation)
+            elif _target_reached(row, sig.direction, position.get("take_profit")):
+                exit_reason = "TAKE_PROFIT"
+                exit_base = float(position["take_profit"])
             elif idx - entry_idx + 1 >= cfg.max_holding_bars:
                 exit_reason = "MAX_HOLD"
                 exit_base = row.close
@@ -271,7 +331,7 @@ def run_backtest(
         state.last_event_time_ms = row.close_time_ms
         signal = evaluator.evaluate(state)
         if position is None and pending is None and signal.direction is not Direction.PASS and idx + 1 < len(ordered):
-            pending = (signal, row)
+            pending = (signal, row, _take_profit_price(state, signal, cfg))
 
     # Deterministic forced close for any open trade at the final known close.
     if position is not None:
@@ -295,7 +355,13 @@ def run_backtest(
             regime=sig.regime,
         ))
 
-    return BacktestResult(symbol, tuple(trades), metrics_from_trades(trades, cfg.starting_equity), skipped)
+    return BacktestResult(
+        symbol,
+        tuple(trades),
+        metrics_from_trades(trades, cfg.starting_equity),
+        skipped,
+        skipped_target,
+    )
 
 
 @dataclass(frozen=True, slots=True)
