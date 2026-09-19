@@ -9,7 +9,7 @@
 - Binance Demo and live capital remain locked.
 - Research-only experiments were removed from the active branch and preserved in `research-archive-20260919`.
 
-## LOCKED ARCHITECTURE
+## LOCKED COIN SONAR V2 / ARCHITECTURE
 `Market Data Hub -> Coin Sonar V2 / Impulse Radar -> existing Signal Hub -> VOL + STRUCTURE + FLOW -> Risk -> bounded Execution`
 
 ### Coin Sonar V2
