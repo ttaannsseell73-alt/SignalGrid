@@ -1,142 +1,53 @@
-# PROJECT_STATE
+# PROJECT_STATE — SCALPING V1
 
-## PROJECT STATUS — FROZEN
-- **Frozen on 2026-09-19 by explicit user decision.**
-- No new SignalGrid architecture, strategy, execution, risk or exchange-integration work is to be added while frozen.
-- Preserve the current main branch as the canonical recovery point; do not delete or rewrite existing work.
-- Reason: benchmark mature, already-working upstream trading bots first instead of continuing custom exchange-infrastructure development.
-- Reopen SignalGrid only after external benchmarks produce evidence that a specific SignalGrid component has measurable value worth retaining.
-- Locked margin policy remains ISOLATED-only if/when SignalGrid is resumed.
+## STATUS — ACTIVE
+- Active project: Binance USDⓈ-M Futures **scalping bot**.
+- Canonical branch: `scalping-v1`.
+- The previous generic SignalGrid/grid-demo line is not the active development target on this branch.
+- Goal: fast, bounded-duration intraday scalps with deterministic execution and strict risk controls.
+- First validation stages: offline replay/backtest -> Binance Futures Demo/Testnet -> only later consider small live capital.
 
-## Canonical repository
-- Repo: `ttaannsseell73-alt/SignalGrid`
-- Canonical branch: `main`
-- Recovery rule: after any interruption, resume from GitHub HEAD + this file, never from conversation memory alone.
-- Commit rule: only tested increments are merged to `main`; feature branches may contain intermediate commits and merge by squash.
+## LOCKED STRATEGY RULES
+- Classic indicator stacks such as RSI/MACD/Stochastic/EMA-cross are not the primary decision engine.
+- Primary signal layer is quantified Price Action:
+  - market structure / swings
+  - HH/HL/LH/LL
+  - range and compression
+  - breakout + retest
+  - liquidity sweep / failed breakout
+  - rejection
+  - expansion
+- Microstructure layer:
+  - spread
+  - taker-flow imbalance / CVD where reliable
+  - book imbalance
+  - price-impact / absorption efficiency
+  - open-interest delta only when trustworthy data is available
+- Missing historical microstructure fields are marked unavailable; no fabricated proxies.
+- Quant validation is mandatory:
+  - hit rate
+  - expectancy
+  - MAE/MFE
+  - holding time
+  - regime dependence
+  - fees + spread + slippage net result
+- Grid is not the strategy. It may be used only as an execution mechanism when the scalping signal/risk layer authorizes it.
 
-## Locked V1 scope
-SignalGrid V1 has exactly five hubs:
-1. Market Data
-2. Signal
-3. Risk
-4. Execution
-5. State/Ops
+## EXECUTION TARGET
+- Low-latency event-driven flow.
+- Multiple simultaneous opportunities may be handled when risk limits permit.
+- Entries must be immediately actionable; stale signals are discarded.
+- Execution model must account for spread, slippage, fill probability and order state.
+- Reconciliation is fail-closed.
+- No martingale.
+- No infinite grid.
+- Every position has bounded risk and deterministic invalidation/exit behavior.
 
-Locked constraints:
-- Binance USDⓈ-M Futures only in V1.
-- Default maximum active positions: 10.
-- Signal core remains volatility + structure + flow + liquidity gate.
-- No new signal family without OOS evidence replacing, not stacking on, an existing feature.
-- One-way position mode only; hedge-mode state fails closed.
-- Margin mode LOCKED: SignalGrid V1 uses ISOLATED margin only. CROSS is forbidden. Preflight/runtime must verify or set ISOLATED before opening exposure; if this cannot be confirmed, fail closed. Auto-add-margin must remain disabled. Each symbol/campaign must not consume margin from unrelated positions.
-- New entries require an open State/Ops execution gate.
-- Bounded directional grid only: default 4 entries, 40% starter MARKET, finite pullback LIMITs, NATR-bounded spacing, global STOP + global TP.
-- No martingale, unbounded averaging, refill or infinite grid.
-- No live-capital mode during M6.
+## ARCHITECTURE
+Market Data -> Price Action Features -> Microstructure -> Regime/Structure -> Quant Score/Expectancy -> Scalping Decision -> Execution -> Risk/Reconciliation
 
-## Verified baseline on main
-- Market: `aggTrade`, `bookTicker`, `kline`, stream sharding/reconnect, 60 closed-bar startup warmup.
-- Signal: NATR, volatility expansion, breakout/failed breakout, taker imbalance, order-book imbalance, spread gate.
-- Risk: max positions, total notional cap, per-symbol guard, signal-strength sizing.
-- Scanner: event-driven up to 50 symbols, freshness gate, debounce, latency observability.
-- Execution: MARKET starter, LIMIT GTC grid entries, Algo STOP_MARKET, Algo TAKE_PROFIT_MARKET, reduce-only emergency close.
-- Campaign ownership: deterministic IDs, persisted registry, restart/reconnect recovery, flat cleanup.
-- State/Ops: SQLite WAL orders/algo orders/positions/events/runtime gates.
-- Recovery: user-data stream + REST reconciliation + buffered gap closure + post-reconcile campaign recovery before gate reopen.
-- Offline validation: production SignalEngine replay, next-bar execution, fees/spread/slippage/funding, OOS walk-forward, parameter stability.
-- Runtime: explicit PAPER and Binance TESTNET modes with persisted runtime state and signal-to-order latency stats.
-- Ops health: detects halt, orphan position/order/algo state, missing owned STOP/TP, TESTNET readiness and runtime failures.
-- Soak telemetry: JSONL journal + 24h/72h evaluation; unhealthy sample/protection gap/orphan state/open failure invalidates the soak.
-- Soak coverage: maximum sample-gap validation prevents sparse journals from faking a continuous 24h/72h run.
-- One-command soak runner: runtime startup + LIVE wait + health sampling + fail-fast + final report in one process.
-- PAPER safety: same-market-event close/re-entry suppression prevents an event from closing and immediately reopening the same campaign.
-- Binance Futures Demo reflex path: secure local Demo credentials, Demo REST/stream endpoints, One-way Mode preflight, 3x leverage pinning, reduced Demo-only risk profile and PASS/LONG/SHORT transition telemetry.
-
-## Canonical main checkpoints
-- M5 backtest/walk-forward: `0fe39210b736c788e9149af12faf3b5ecfc19366`
-- M6 bounded-grid preflight: `08531441d33992e649c953fdf6c9eb6bec98087f`
-- M6 Binance execution plumbing: `952abbceccab628746953b8c052c19531143a4bb`
-- M6 PAPER/TESTNET runtime + reconnect-safe recovery: `c43c9638beecfc1beeb33c0b2f996201de7501e4`
-- M6 soak telemetry + PAPER re-entry hardening: `a25d80bf1be5d34b5e4d82b710f99fdd03e4973d`
-- M6 one-command soak runner + coverage hardening: `58e3669e1c2585bf4a390a74b9d855fd4c20539b`
-- M6 Binance Futures Demo reflex runner: `765cf313e3575d5af1474338a58c9f11e192c62a`
-- M6 Demo signal-active reflex profile + diagnostics: `68cecc367291441cd4861f4ec661a5fce7f3090a`
-- M6 cleanup idempotency hardening for Binance -2011 races: `32725fa41479374b96ead84900ca3ddb57622988`
-- M6 pre-exposure starter failure hardening + root-cause telemetry: `e80243ba78f209080596c381b04dcaa1dfe2a2eb`
-- M6 protective trigger basis/geometry hardening: `6770b55b7f7a854467e433e79862f1a82968a687`
-- M6 Demo stale-owned-order preflight cleanup: `e2253c06aef76d79e90984ca39cdeb686452af8e`
-- M6 Demo stale-position reset hardening: `5c1e777801c790d3cfa4bef9a344b919de0d0826`
-- M6 Demo/runtime REST timeout hardening: `81003302410f0d5627003f7ecd1d2856ab64fd3b`
-- M7 bounded neutral-grid regime + execution: `6d2b817dde56a3efef722a3226c7bd5507f51d8e`
-- M7 directional stop-geometry signal gate: `a4ade7759a4ed9fb54bbb0f45813d1b71df21227`
-- M7 close-position algo identity hardening: `a734d10c4a2217248e8aea72c2212c7e25c97dd5`
-- M7 Binance algo lifecycle hardening (`TRIGGERED -> FINISHED`): `46deaab53dbc61aeafd8da249e611cf8b10a1af4`
-
-## Milestones
-- [x] M0 project skeleton
-- [x] M1 public WebSocket transport
-- [x] M2 30-50 symbol scanner
-- [x] M3 authenticated execution adapter
-- [x] M4 reconciliation/restart recovery
-- [x] M5 backtest/walk-forward harness
-- [x] M6 bounded-grid execution shape
-- [x] M6 PAPER/TESTNET runtime wiring
-- [x] M6 soak telemetry merge
-- [x] M6 one-command soak runner merge
-- [x] M6 Binance Futures Demo reflex runner
-- [ ] M6 Binance Demo 1h reflex smoke/stress
-- [ ] M6 PAPER 24h soak
-- [ ] M6 TESTNET/DEMO 24h soak
-- [ ] M6 TESTNET/DEMO 72h soak
-
-## Latest verification
-- PR #9 merged by squash as `765cf313e3575d5af1474338a58c9f11e192c62a`.
-- PR #9 CI: Python 3.11 PASS, 3.12 PASS, 3.13 PASS.
-- Demo runner never uses production credentials; launcher reads Demo secret locally and removes credential environment variables at exit.
-- Demo preflight rejects Hedge Mode and pins every stress-test symbol to 3x leverage before runtime starts.
-- Demo-only risk profile: max 6 positions, 1,200 USDT total notional, 100 USDT base notional, 200 USDT max per campaign, 3x leverage.
-- Reflex telemetry records direction transitions, LONG↔SHORT reversals, trade→PASS invalidations, PASS→trade activations and transition-response latency.
-- First authenticated Demo run proved connectivity/execution readiness but produced 0 signals after 42,442 market events and 15,698 evaluations; open failures remained 0. Root cause is signal gating, not API connectivity.
-- PR #10 merged by squash as `68cecc367291441cd4861f4ec661a5fce7f3090a`; CI PASS on Python 3.11/3.12/3.13.
-- Demo reflex now uses a Demo-only reactive signal profile: structure lookback 5, max spread 10 bps, min expansion 0.90, strong expansion 1.20, min flow abs 0.05, min book abs 0.03, entry threshold 0.52. Production SignalConfig defaults are unchanged.
-- Demo telemetry now exposes PASS rejection reasons, LONG/SHORT signals seen, emitted LONG/SHORT counts, and 10-second console progress.
-- Authenticated Demo rerun on 2026-09-18 proved directional signal/execution path: 1 emitted LONG, 1 campaign opened, 0 open failures; rejection distribution at failure point included NO_STRUCTURE 48, NO_VOL_EXPANSION 29, LIQUIDITY_GATE 15, SYMBOL_ALREADY_ACTIVE 15.
-- The same run exposed a cleanup race: Binance returned -2011 `Unknown order sent` when a flat-campaign sibling algo order had already disappeared from the exchange. This incorrectly halted the soak.
-- PR #11 merged as `32725fa41479374b96ead84900ca3ddb57622988`; CI PASS on Python 3.11/3.12/3.13. Flat cleanup now treats only Binance order-not-found (-2011) as pending exchange/user-stream convergence; other cleanup failures remain fail-closed.
-- Next authenticated Demo run produced 44 LONG signals seen, 2 emitted LONG signals, 1 campaign opened, then `GRID_OPEN_DEGRADED:BTCUSDT`. Health at failure showed only one full campaign footprint (1 position, 3 active regular orders, 2 active algos) despite 2 active campaign records, strongly indicating the second BTC campaign failed at starter entry before exposure.
-- PR #12 merged as `e80243ba78f209080596c381b04dcaa1dfe2a2eb`; CI PASS on Python 3.11/3.12/3.13. Starter failures before any exposure now mark the campaign FAILED without account HALT; once exposure exists, stop/protection failures remain fail-closed. Runtime now persists `last_open_error` with phase, symbol, campaign, exception and root cause; Demo progress surfaces it directly.
-- Authenticated Demo then opened 4 campaigns successfully before APTUSDT failed at protective STOP placement with Binance `-2021 Order would immediately trigger`; emergency close succeeded and fail-closed account HALT behaved as designed. Root cause: signal invalidation comes from regular futures kline/contract-price structure, while protective orders were configured with `MARK_PRICE` trigger basis.
-- PR #13 merged as `6770b55b7f7a854467e433e79862f1a82968a687`; CI PASS on Python 3.11/3.12/3.13. Protective STOP/TP now use `CONTRACT_PRICE`, matching the signal/invalidation basis. A 2 bps trigger-geometry guard validates STOP and TP against current contract price before starter exposure, then validates again at protective submit time. Invalid geometry fails before exposure without account HALT; any post-exposure protection failure remains fail-closed with emergency close.
-- Fresh Demo rerun then failed at startup reconciliation because 8 stale SignalGrid LIMIT orders (`sg-g-*`) from prior runs remained on Binance Demo while the new run used a fresh SQLite DB. This is expected fail-closed behavior, but required manual cleanup.
-- PR #14 merged as `e2253c06aef76d79e90984ca39cdeb686452af8e`; CI PASS on Python 3.11/3.12/3.13. Demo preflight now refuses any open position, refuses foreign/non-SignalGrid open orders, automatically cancels only stale `sg-*` regular/algo orders, verifies the account is empty, then pins leverage and starts reconciliation. This removed manual stale-order cleanup, but the next run still found stale FETUSDT/NEARUSDT positions from prior tests and stopped safely.
-- PR #15 merged as `5c1e777801c790d3cfa4bef9a344b919de0d0826`; CI PASS on Python 3.11/3.12/3.13. Demo-only preflight now resets stale SignalGrid test exposure automatically: it refuses foreign/non-SignalGrid open orders or positions outside the configured stress universe, cancels owned entry orders first, closes remaining configured Demo positions with reduce-only MARKET orders while protective algos remain active, waits until flat, cancels remaining owned algos, verifies the account is fully clean, then pins leverage and starts reconciliation. Production/live paths are unchanged.
-- Next Demo start failed while setting leverage because Binance SDK REST default timeout is 1000 ms and `demo-fapi.binance.com` exceeded that read timeout. PR #16 merged as `81003302410f0d5627003f7ecd1d2856ab64fd3b`; CI PASS on Python 3.11/3.12/3.13. SignalGrid REST timeout is now 5000 ms with explicit 3 retries / 500 ms backoff across runtime REST clients. Demo preflight additionally retries only idempotent calls (position-mode read and leverage setter) on transient network errors; state-changing reset MARKET orders are not blindly retried.
-- Authenticated Demo run on 2026-09-19 achieved the first clean directional lifecycle: 1 campaign opened, 1 campaign closed, 1 cleanup completed, 0 open failures, `last_open_error=null`; no recurrence of prior reconciliation, -2011, -2021, or 1-second timeout failures.
-- PR #17 merged as `6d2b817dde56a3efef722a3226c7bd5507f51d8e`; CI PASS on Python 3.11/3.12/3.13 (112 tests). The locked four-outcome regime model is now implemented: `LONG_GRID / SHORT_GRID / NEUTRAL_GRID / PASS`.
-- `NEUTRAL_GRID` uses only the existing volatility + structure + flow family: balanced/compressed RANGE states can arm a finite symmetric LIMIT ladder with no MARKET starter. First fill determines LONG or SHORT, installs global STOP/TP immediately, cancels opposing entries, retains only same-side bounded ladder entries, and stays fail-closed on protection/direction ambiguity. PAPER and Demo telemetry support the neutral path.
-- First authenticated M7 Demo run proved neutral regime emission/arming (`neutral_signals_seen=1`, `emitted_neutral=1`, `campaigns_opened=1`) but also exposed repeated directional pre-exposure rejects: BTC LONG invalidation was ~0.26 bps from current contract price while execution requires a 2 bps protective-trigger guard, causing `ProtectiveTriggerError` and inflating `open_failures` despite no exposure being opened.
-- PR #18 merged as `a4ade7759a4ed9fb54bbb0f45813d1b71df21227`; CI PASS on Python 3.11/3.12/3.13. Directional stop geometry now fails in SignalEngine before execution: invalidation must be on the correct side and at least 3 bps from current contract-price reference, otherwise the signal becomes `PASS / STOP_TOO_CLOSE`. Neutral-grid logic is unchanged. Soak evaluation also now allows only a 10 ms timestamp-quantization epsilon, fixing an unrelated CI boundary flake without weakening material duration coverage.
-- Authenticated Demo rerun after the stop-geometry gate completed 2 opens, 2 closes and 2 cleanups with `open_failures=0`, `last_open_error=null`, `STOP_TOO_CLOSE=24`, no orphans and no protection gaps, but then halted on `ALGO_IDENTITY_CONFLICT:...:qty:0!=279.1`. Account state was otherwise fully flat/clean.
-- Root cause: the same Binance `closePosition=true` protective algo can report `quantity=0` in REST/one ALGO_UPDATE phase and the then-current position quantity in another ALGO_UPDATE phase. For close-position STOP/TP orders quantity is not a fixed identity field; `closePosition=true` means close the entire position at trigger.
-- PR #19 merged as `a734d10c4a2217248e8aea72c2212c7e25c97dd5`; CI PASS on Python 3.11/3.12/3.13. User-stream identity checks and REST reconciliation now ignore quantity drift only when both views are `closePosition=true`; fixed-quantity/non-close-position algos remain strict and still fail closed on quantity mismatch.
-- Next authenticated Demo run then halted on `TERMINAL_ALGO_MUTATION:...:TRIGGERED->FINISHED` while account state remained internally consistent (1 position, 3 regular orders, 2 protective algos, no orphans/protection gaps, `open_failures=0`).
-- Root cause: SignalGrid incorrectly classified Binance algo status `TRIGGERED` as terminal. Binance USD-M conditional algo lifecycle can continue from `TRIGGERED` to `FINISHED`; official connector status definitions expose `TRIGGERING`, `TRIGGERED` and `FINISHED` as distinct states.
-- PR #20 merged as `46deaab53dbc61aeafd8da249e611cf8b10a1af4`; CI PASS on Python 3.11/3.12/3.13. `FINISHED/CANCELED/EXPIRED/REJECTED/FAILED` remain final; `TRIGGERED -> FINISHED` is explicitly accepted; backwards mutation from `TRIGGERED` remains fail-closed.
-- Dynamic leverage remains the next required Risk Hub feature after one authenticated Demo neutral lifecycle is proven clean.
-- No live-capital path is enabled.
-
-## Immediate next task
-SignalGrid is frozen. No further SignalGrid runtime testing or development is scheduled until benchmark evidence justifies reopening it.
-
-External benchmark order:
-1. OctoBot 2.1.1 stable — upstream/unmodified Binance Futures Testnet/Demo test, ISOLATED required.
-2. Hummingbot — upstream/unmodified perpetual market-making/execution benchmark.
-3. Passivbot v8 — backtest benchmark while isolated-margin live entry support remains unsuitable for the locked safety rule.
-4. TWIN GRID — optional later comparison.
-
-Benchmark rule:
-- Start from a working upstream system.
-- No source-code modifications in the first evaluation pass; config-only changes are allowed.
-- ISOLATED margin is mandatory for authenticated futures testing.
-- If a system cannot satisfy the safety gate without source modification, reject it from authenticated testing.
-- Add only small, evidence-driven control layers after a baseline system has run successfully and its behavior is understood.
+## NEXT IMPLEMENTATION GATE
+1. Preserve existing reusable Binance execution/reconciliation infrastructure.
+2. Replace generic grid/demo signal profile with dedicated scalping signal engine.
+3. Add scalping-specific replay tests and cost model.
+4. Require statistically positive net expectancy after costs before Demo/Testnet progression.
