@@ -62,6 +62,7 @@ SCALPING_GRID_CONFIG = GridConfig(
     min_spacing_bps=4.0,
     max_spacing_bps=25.0,
     take_profit_steps=1.2,
+    min_take_profit_bps=30.0,
 )
 
 
@@ -183,6 +184,7 @@ def build_scalping_demo_runtime(
                 "min_spacing_bps": SCALPING_GRID_CONFIG.min_spacing_bps,
                 "max_spacing_bps": SCALPING_GRID_CONFIG.max_spacing_bps,
                 "take_profit_steps": SCALPING_GRID_CONFIG.take_profit_steps,
+                "min_take_profit_bps": SCALPING_GRID_CONFIG.min_take_profit_bps,
                 "max_positions": SCALPING_RISK_CONFIG.max_positions,
                 "max_total_notional_usdt": SCALPING_RISK_CONFIG.max_total_notional_usdt,
                 "leverage": SCALPING_RISK_CONFIG.leverage,
