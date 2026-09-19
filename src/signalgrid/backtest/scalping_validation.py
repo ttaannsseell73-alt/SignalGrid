@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from statistics import mean
 from typing import Sequence
 
@@ -46,6 +46,7 @@ class ScalpingValidationReport:
     by_regime: tuple[SliceMetrics, ...]
     history_span_days: float
     oos_start_ms: int | None
+    historical_microstructure_scope: str
     passed: bool
     reasons: tuple[str, ...]
 
@@ -90,6 +91,10 @@ def run_scalping_validation(
     """
 
     sig_cfg = signal_config or ScalpingConfig()
+    # Binance's current public USD-M archives do not provide a reliable current
+    # historical bookTicker series. Historical validation therefore disables
+    # unavailable book/spread features explicitly instead of synthesizing them.
+    historical_sig_cfg = replace(sig_cfg, require_book_microstructure=False)
     gate_cfg = gate or ScalpingValidationGate()
     if not 0.10 <= gate_cfg.oos_fraction <= 0.50:
         raise ValueError("oos_fraction must be between 0.10 and 0.50")
@@ -101,7 +106,7 @@ def run_scalping_validation(
         assumed_spread_bps=1.5,
         slippage_bps=1.0,
         max_holding_bars=6,
-        require_book=True,
+        require_book=False,
         take_profit_enabled=True,
         tp_spacing_natr_multiplier=0.20,
         tp_min_spacing_bps=4.0,
@@ -115,7 +120,7 @@ def run_scalping_validation(
         assumed_spread_bps=3.0,
         slippage_bps=3.0,
         max_holding_bars=6,
-        require_book=True,
+        require_book=False,
         take_profit_enabled=True,
         tp_spacing_natr_multiplier=0.20,
         tp_min_spacing_bps=4.0,
@@ -127,7 +132,7 @@ def run_scalping_validation(
         rows,
         backtest_config=base_cfg,
         funding_points=funding_points,
-        engine=ScalpingSignalEngine(sig_cfg),
+        engine=ScalpingSignalEngine(historical_sig_cfg),
     )
     stress = run_backtest(
         rows,
@@ -221,6 +226,7 @@ def run_scalping_validation(
         by_regime=_slice_metrics(base.trades, "regime"),
         history_span_days=history_span_days,
         oos_start_ms=oos_start_ms,
+        historical_microstructure_scope="PRICE_ACTION_TAKER_ONLY",
         passed=not reasons,
         reasons=tuple(reasons),
     )
