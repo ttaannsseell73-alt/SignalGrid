@@ -10,7 +10,7 @@ from signalgrid.state.store import StateStore, StoredAlgoOrder, StoredOrder
 
 
 TERMINAL_ORDER_STATUSES = {"FILLED", "CANCELED", "EXPIRED", "REJECTED", "EXPIRED_IN_MATCH"}
-TERMINAL_ALGO_STATUSES = {"TRIGGERED", "FINISHED", "CANCELED", "EXPIRED", "REJECTED", "FAILED"}
+FINAL_ALGO_STATUSES = {"FINISHED", "CANCELED", "EXPIRED", "REJECTED", "FAILED"}
 
 
 class UserDataStateError(RuntimeError):
@@ -239,9 +239,21 @@ class BinanceUserDataProcessor:
                 return self._halt_conflict(conflict, "ALGO_UPDATE")
             if event_time and event_time < existing.event_time:
                 return UserDataResult("ALGO_UPDATE", False, stale=True, detail="STALE_ALGO_EVENT")
-            if existing.status in TERMINAL_ALGO_STATUSES and incoming.status != existing.status:
+            if existing.status in FINAL_ALGO_STATUSES and incoming.status != existing.status:
                 return self._halt_conflict(
                     f"TERMINAL_ALGO_MUTATION:{client_id}:{existing.status}->{incoming.status}",
+                    "ALGO_UPDATE",
+                )
+            # Binance conditional algo lifecycle can legitimately progress
+            # TRIGGERED -> FINISHED after the trigger fires and the generated
+            # order completes. TRIGGERED is therefore not a final state.
+            # Other backwards/sideways mutations from TRIGGERED remain fail-closed.
+            if (
+                existing.status == "TRIGGERED"
+                and incoming.status not in {"TRIGGERED", "FINISHED"}
+            ):
+                return self._halt_conflict(
+                    f"ALGO_STATUS_REGRESSION:{client_id}:{existing.status}->{incoming.status}",
                     "ALGO_UPDATE",
                 )
             if incoming == existing:
