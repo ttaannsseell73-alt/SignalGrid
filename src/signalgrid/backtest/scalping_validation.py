@@ -95,8 +95,8 @@ def scalping_parameter_neighborhood(base: ScalpingConfig) -> tuple[ScalpingConfi
             out.append(
                 replace(
                     base,
-                    min_score=min(0.95, max(0.50, base.min_score + score_delta)),
-                    min_expansion=max(0.50, base.min_expansion + expansion_delta),
+                    min_score=round(min(0.95, max(0.50, base.min_score + score_delta)), 6),
+                    min_expansion=round(max(0.50, base.min_expansion + expansion_delta), 6),
                 )
             )
     return tuple(out)
