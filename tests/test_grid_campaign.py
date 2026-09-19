@@ -4,7 +4,7 @@ from decimal import Decimal
 from signalgrid.execution.binance import BinanceOrderNotFoundError, ExecutionReceipt, client_order_id
 from signalgrid.execution.campaign import GridCampaignError, GridCampaignExecutor, GridCampaignRegistry
 from signalgrid.execution.grid import GridEntryLevel, GridPlan
-from signalgrid.models import Direction
+from signalgrid.models import Direction, GridMode
 from signalgrid.state.store import StateStore, StoredAlgoOrder, StoredOrder
 
 
@@ -25,6 +25,32 @@ def plan():
             GridEntryLevel(2, "LIMIT", 99.4, 100.0),
             GridEntryLevel(3, "LIMIT", 99.1, 100.0),
         ),
+    )
+
+
+def neutral_plan():
+    return GridPlan(
+        campaign_id="neutral-001",
+        symbol="SOLUSDT",
+        direction=Direction.PASS,
+        reference_price=100.0,
+        total_notional_usdt=400.0,
+        leverage=3,
+        spacing_bps=30.0,
+        invalidation=0.0,
+        take_profit=100.0,
+        entries=(
+            GridEntryLevel(1, "LIMIT", 99.7, 100.0, Direction.LONG),
+            GridEntryLevel(2, "LIMIT", 99.4, 100.0, Direction.LONG),
+            GridEntryLevel(3, "LIMIT", 100.3, 100.0, Direction.SHORT),
+            GridEntryLevel(4, "LIMIT", 100.6, 100.0, Direction.SHORT),
+        ),
+        mode=GridMode.NEUTRAL_GRID,
+        neutral_long_invalidation=99.1,
+        neutral_long_take_profit=100.0,
+        neutral_short_invalidation=100.9,
+        neutral_short_take_profit=100.0,
+        expires_at_ms=9999999999999,
     )
 
 
@@ -207,3 +233,59 @@ def test_invalid_stop_precheck_rejects_campaign_before_exposure_without_halt(tmp
     assert GridCampaignRegistry(store).get("SOLUSDT").status == "FAILED"
     assert not any(call[0] == "starter" for call in adapter.calls)
     assert adapter.emergency == []
+
+
+def test_neutral_campaign_arms_without_market_starter_and_protects_first_long_fill(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    adapter = FakeAdapter()
+    executor = GridCampaignExecutor(adapter, store)
+    result = asyncio.run(executor.open_campaign(neutral_plan()))
+    record = result.campaign
+
+    assert record.mode == GridMode.NEUTRAL_GRID.value
+    assert record.activated is False
+    assert record.starter_client_id == ""
+    assert len(result.limit_exchange_order_ids) == 4
+    assert not any(call[0] == "starter" for call in adapter.calls)
+
+    sides = ("BUY", "BUY", "SELL", "SELL")
+    for i, (cid, side) in enumerate(zip(record.limit_client_ids, sides), start=1):
+        store.upsert_order(
+            StoredOrder(
+                cid,
+                f"20{i}",
+                "SOLUSDT",
+                side,
+                "NEW",
+                "LIMIT",
+                Decimal("1"),
+                Decimal("0"),
+                Decimal("0"),
+                False,
+                1000 + i,
+                None,
+            )
+        )
+    store.upsert_account_position("SOLUSDT", "LONG", Decimal("1"), Decimal("99.7"), Decimal("99.7"), 3000)
+
+    assert asyncio.run(executor.cleanup_if_flat("SOLUSDT")) is False
+    activated = GridCampaignRegistry(store).active("SOLUSDT")
+    assert activated is not None
+    assert activated.activated is True
+    assert activated.direction == "LONG"
+    assert ("STOP_MARKET", f"{record.campaign_id}:stop") in adapter.calls
+    assert ("TAKE_PROFIT_MARKET", f"{record.campaign_id}:tp") in adapter.calls
+    assert set(adapter.canceled_orders) == {("SOLUSDT", "203"), ("SOLUSDT", "204")}
+    assert store.halted() is False
+
+
+def test_unfilled_neutral_campaign_is_not_cleaned_as_flat(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    adapter = FakeAdapter()
+    executor = GridCampaignExecutor(adapter, store)
+    asyncio.run(executor.open_campaign(neutral_plan()))
+    assert asyncio.run(executor.cleanup_if_flat("SOLUSDT")) is False
+    record = GridCampaignRegistry(store).active("SOLUSDT")
+    assert record is not None
+    assert record.activated is False
+    assert store.halted() is False
