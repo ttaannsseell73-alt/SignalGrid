@@ -37,7 +37,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Resolve UTC cache day
+        id: cache_day
+        shell: bash
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore historical kline cache
+        id: data_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/scalping
+          key: scalping-kline-v1-${{ steps.cache_day.outputs.day }}-${{ env.DAYS }}-${{ env.SYMBOLS }}
+
       - name: Download historical klines
+        if: steps.data_cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -49,6 +62,13 @@ jobs:
             echo "Downloading $symbol / $DAYS days"
             python -m signalgrid.ops.download_scalping_data               --symbol "$symbol"               --days "$DAYS"               --output-dir data/scalping
           done
+
+      - name: Save historical kline cache
+        if: steps.data_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: data/scalping
+          key: scalping-kline-v1-${{ steps.cache_day.outputs.day }}-${{ env.DAYS }}-${{ env.SYMBOLS }}
 
       - name: Run multi-symbol no-lookahead quant gate
         id: quant
@@ -99,4 +119,4 @@ jobs:
           test -f validation/scalping_gate.json
           echo "Scalping quant gate PASS"
 
-# validation-revision: 3-cost-aware-tp
+# validation-revision: 4-diagnostics-cache
