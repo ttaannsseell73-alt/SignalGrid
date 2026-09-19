@@ -73,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
             "by_direction": [asdict(x) for x in report.by_direction],
             "by_setup_regime": [asdict(x) for x in report.by_setup_regime],
             "by_exit_reason": [asdict(x) for x in report.by_exit_reason],
+            "base_trades": [asdict(x) for x in report.base.trades],
         }
         if report.passed:
             validated.append(symbol)

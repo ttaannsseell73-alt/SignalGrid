@@ -59,6 +59,7 @@ class SimulatedTrade:
     mfe_usdt: float = 0.0
     regime: str = ""
     initial_stop_bps: float = 0.0
+    signal_strength: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,6 +365,7 @@ def run_backtest(
                     mfe_usdt=float(position["mfe_usdt"]),
                     regime=sig.regime,
                     initial_stop_bps=float(position["initial_stop_bps"]),
+                    signal_strength=float(sig.strength),
                 ))
                 position = None
 
@@ -402,6 +404,7 @@ def run_backtest(
             mfe_usdt=float(position["mfe_usdt"]),
             regime=sig.regime,
             initial_stop_bps=float(position["initial_stop_bps"]),
+            signal_strength=float(sig.strength),
         ))
 
     return BacktestResult(
